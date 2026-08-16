@@ -18,7 +18,7 @@
     "@tiptap/extension-task-item": "^3.27.3",
     "@tiptap/extension-task-list": "^3.27.3",
     "@tiptap/html": "^3.27.3",
-    "@tiptap/starter-kit": "^3.27.3",
+    "@tiptap/starter-kit": "^3.30.0",
     "dotenv": "^16.6.1",
     "katex": "^0.16.47",
     "marked": "^18.0.6",
