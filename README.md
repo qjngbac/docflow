@@ -39,7 +39,7 @@ Java 服务负责身份认证、业务接口、文档权限和文件访问；协
 | 层级 | 主要技术 |
 | --- | --- |
 | 后端 | Java 17、Spring Boot 3.2.5、Spring Security、MyBatis-Plus、Flyway、Apache POI |
-| 前端 | Vue 3、Vite 5、Pinia、Tiptap 3、DOMPurify、KaTeX、MathLive |
+| 前端 | Vue 3、Vite 8、Pinia、Tiptap 3、DOMPurify、KaTeX、MathLive |
 | 实时协作 | Yjs、Hocuspocus、y-indexeddb、Redis Pub/Sub |
 | 数据与存储 | MySQL 8、Redis 6+、本地文件存储（可替换为私有对象存储） |
 | 运维与安全 | Nginx、HTTPS、Prometheus、Alertmanager、CodeQL、Gitleaks、OWASP Dependency-Check |
@@ -63,7 +63,7 @@ Javaproject/
 
 - JDK 17
 - Maven 3.9+
-- Node.js 20+ 与 npm
+- Node.js 20.19+ 与 npm
 - MySQL 8.0+
 - Redis 6.0+
 
