@@ -25,7 +25,7 @@
         <druid.version>1.2.21</druid.version>
         <jjwt.version>0.12.5</jjwt.version>
         <hutool.version>5.8.25</hutool.version>
-        <minio.version>8.5.9</minio.version>
+        <minio.version>9.0.3</minio.version>
         <poi.version>5.2.5</poi.version>
         <jsoup.version>1.17.2</jsoup.version>
     </properties>
