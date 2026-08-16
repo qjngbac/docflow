@@ -15,7 +15,7 @@ jobs:
   zap-baseline:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - name: OWASP ZAP baseline scan
         env:
           TARGET_URL: ${{ inputs.target_url }}

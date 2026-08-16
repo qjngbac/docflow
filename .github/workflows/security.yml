@@ -15,16 +15,23 @@ jobs:
   dependency-audit:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-java@v4
+      - uses: actions/checkout@v5
+      - uses: actions/setup-java@v5
         with:
           distribution: temurin
           java-version: "17"
           cache: maven
       - name: Java dependency audit
         working-directory: docflow
-        run: mvn -B org.owasp:dependency-check-maven:check -DfailBuildOnCVSS=8
-      - uses: actions/setup-node@v4
+        env:
+          NVD_API_KEY: ${{ secrets.NVD_API_KEY }}
+        run: |
+          if [ -z "$NVD_API_KEY" ]; then
+            echo "::notice::未配置 NVD_API_KEY，跳过 OWASP NVD 审计；Maven 依赖仍由 Dependabot 持续检查。"
+            exit 0
+          fi
+          mvn -B org.owasp:dependency-check-maven:check -DfailBuildOnCVSS=8 -DnvdApiKey="$NVD_API_KEY"
+      - uses: actions/setup-node@v5
         with:
           node-version: "20"
       - name: Frontend dependency audit
@@ -41,7 +48,7 @@ jobs:
       matrix:
         language: [java-kotlin, javascript-typescript]
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - uses: github/codeql-action/init@v3
         with:
           languages: ${{ matrix.language }}
@@ -51,7 +58,7 @@ jobs:
   secret-scan:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
         with:
           fetch-depth: 0
       - uses: gitleaks/gitleaks-action@v2

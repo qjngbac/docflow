@@ -25,3 +25,5 @@
 - 必须启用 HTTPS、Secure/HttpOnly/SameSite Cookie、安全响应头、访问限流、备份和监控告警。
 - 文件上传应接入病毒扫描；管理端口、数据库和 Redis 不应直接暴露公网。
 - 上线前应完成依赖扫描、密钥扫描、代码扫描和隔离测试环境中的渗透测试。
+
+仓库已启用 Dependabot、CodeQL 和 Gitleaks。若要在 GitHub Actions 中执行完整 OWASP NVD 依赖审计，请在仓库 Actions secrets 中配置 `NVD_API_KEY`；未配置时工作流会明确跳过该步骤，避免把外部漏洞库鉴权故障误报为项目构建失败。
