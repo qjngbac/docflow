@@ -12,7 +12,7 @@
     "@hocuspocus/extension-redis": "latest",
     "@hocuspocus/server": "latest",
     "@hocuspocus/transformer": "latest",
-    "@tiptap/extension-image": "^3.27.3",
+    "@tiptap/extension-image": "^3.30.0",
     "@tiptap/extension-mathematics": "^3.27.3",
     "@tiptap/extension-table": "^3.27.3",
     "@tiptap/extension-task-item": "^3.27.3",
