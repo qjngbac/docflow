@@ -1,0 +1,9 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 200 48" role="img" aria-labelledby="title">
+  <title id="title">DocFlow</title>
+  <rect x="2" y="4" width="40" height="40" rx="8" fill="#2563eb"/>
+  <path d="M13 11h12l7 7v19H13z" fill="#fff"/>
+  <path d="M25 11v7h7" fill="#bfdbfe"/>
+  <path d="M17 24h10M17 29h8" stroke="#2563eb" stroke-width="2" stroke-linecap="round"/>
+  <path d="M10 35l10-10 3 3-10 10-4 1z" fill="#f59e0b" stroke="#fff" stroke-width="1"/>
+  <text x="52" y="32" fill="#172033" font-family="Segoe UI,Arial,sans-serif" font-size="25" font-weight="700">DocFlow</text>
+</svg>

@@ -1,0 +1,15 @@
+# Example ModSecurity + OWASP Core Rule Set entry point for an isolated staging environment.
+# Verify the package paths used by your Linux distribution before enabling it in Nginx.
+
+SecRuleEngine DetectionOnly
+SecRequestBodyAccess On
+SecRequestBodyLimit 52428800
+SecRequestBodyNoFilesLimit 1048576
+SecResponseBodyAccess Off
+SecAuditEngine RelevantOnly
+SecAuditLog /var/log/nginx/docflow-modsecurity-audit.log
+
+Include /etc/modsecurity/crs/crs-setup.conf
+Include /etc/modsecurity/crs/rules/*.conf
+
+# After reviewing false positives in staging, change DetectionOnly to On.

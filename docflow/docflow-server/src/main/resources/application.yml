@@ -1,0 +1,172 @@
+﻿server:
+  port: 8080
+
+spring:
+  application:
+    name: docflow-server
+
+  datasource:
+    driver-class-name: com.mysql.cj.jdbc.Driver
+    url: ${DB_URL:jdbc:mysql://localhost:3306/docflow?useUnicode=true&characterEncoding=utf-8&useSSL=false&serverTimezone=Asia/Shanghai&allowPublicKeyRetrieval=true}
+    username: ${DB_USERNAME:root}
+    password: ${DB_PASSWORD:}
+    type: com.alibaba.druid.pool.DruidDataSource
+
+  flyway:
+    enabled: ${FLYWAY_ENABLED:false}
+    locations: classpath:db/migration
+    baseline-version: 1
+    baseline-description: docflow-current-schema
+    baseline-on-migrate: ${FLYWAY_BASELINE_ON_MIGRATE:false}
+    validate-on-migrate: true
+    clean-disabled: true
+    out-of-order: false
+
+  data:
+    redis:
+      host: ${REDIS_HOST:localhost}
+      port: ${REDIS_PORT:6379}
+      password: ${REDIS_PASSWORD:}
+      database: ${REDIS_DATABASE:0}
+
+  servlet:
+    multipart:
+      max-file-size: 10MB
+      max-request-size: 50MB
+
+  mail:
+    host: ${MAIL_HOST:localhost}
+    port: ${MAIL_PORT:25}
+    username: ${MAIL_USERNAME:}
+    password: ${MAIL_PASSWORD:}
+    properties:
+      mail:
+        smtp:
+          auth: ${MAIL_SMTP_AUTH:false}
+          starttls:
+            enable: ${MAIL_STARTTLS_ENABLE:false}
+          ssl:
+            enable: ${MAIL_SSL_ENABLE:false}
+          connectiontimeout: ${MAIL_CONNECTION_TIMEOUT_MS:5000}
+          timeout: ${MAIL_READ_TIMEOUT_MS:5000}
+          writetimeout: ${MAIL_WRITE_TIMEOUT_MS:5000}
+
+mybatis-plus:
+  mapper-locations: classpath:mapper/*.xml
+  configuration:
+    map-underscore-to-camel-case: true
+    log-impl: org.apache.ibatis.logging.stdout.StdOutImpl
+  global-config:
+    db-config:
+      id-type: auto
+
+jwt:
+  secret: ${JWT_SECRET:docflow-local-secret-key-must-be-at-least-256-bits-long}
+  expiration: ${JWT_ACCESS_EXPIRATION_MS:1800000}
+
+file:
+  upload-dir: ./uploads
+  max-size: 10MB
+  public-access-enabled: ${FILE_PUBLIC_ACCESS_ENABLED:true}
+  signing-secret: ${FILE_SIGNING_SECRET:docflow-local-file-signing-secret-change-in-production}
+  signed-url-seconds: ${FILE_SIGNED_URL_SECONDS:300}
+
+collaboration:
+  persist-interval-ms: 30000
+  draft-ttl-hours: 168
+
+app:
+  environment: ${APP_ENV:development}
+  auth:
+    idle-timeout-minutes: ${AUTH_IDLE_TIMEOUT_MINUTES:30}
+    session-days: ${AUTH_SESSION_DAYS:7}
+    remember-days: ${AUTH_REMEMBER_DAYS:30}
+    touch-interval-seconds: ${AUTH_TOUCH_INTERVAL_SECONDS:60}
+    cookie:
+      enabled: ${AUTH_COOKIE_ENABLED:false}
+      secure: ${AUTH_COOKIE_SECURE:false}
+      same-site: ${AUTH_COOKIE_SAME_SITE:Lax}
+      access-name: ${AUTH_ACCESS_COOKIE_NAME:DOCFLOW_ACCESS}
+      refresh-name: ${AUTH_REFRESH_COOKIE_NAME:DOCFLOW_REFRESH}
+      csrf-name: ${AUTH_CSRF_COOKIE_NAME:XSRF-TOKEN}
+  security:
+    state:
+      fail-closed: ${SECURITY_STATE_FAIL_CLOSED:false}
+    trusted-proxies: ${SECURITY_TRUSTED_PROXIES:127.0.0.1/32,::1/128}
+    ip-deny-list: ${SECURITY_IP_DENY_LIST:}
+    rate-limit:
+      general-per-minute: ${RATE_LIMIT_GENERAL_PER_MINUTE:180}
+      auth-per-minute: ${RATE_LIMIT_AUTH_PER_MINUTE:30}
+      upload-per-minute: ${RATE_LIMIT_UPLOAD_PER_MINUTE:30}
+      share-per-minute: ${RATE_LIMIT_SHARE_PER_MINUTE:60}
+    login:
+      captcha-after-failures: ${LOGIN_CAPTCHA_AFTER_FAILURES:3}
+      account-max-failures: ${LOGIN_ACCOUNT_MAX_FAILURES:5}
+      ip-max-failures: ${LOGIN_IP_MAX_FAILURES:20}
+      observation-minutes: ${LOGIN_FAILURE_OBSERVATION_MINUTES:15}
+      account-lock-minutes: ${LOGIN_ACCOUNT_LOCK_MINUTES:15}
+      ip-lock-minutes: ${LOGIN_IP_LOCK_MINUTES:30}
+      captcha-expire-minutes: ${LOGIN_CAPTCHA_EXPIRE_MINUTES:5}
+    malware-scan:
+      enabled: ${MALWARE_SCAN_ENABLED:false}
+      fail-closed: ${MALWARE_SCAN_FAIL_CLOSED:false}
+      host: ${CLAMAV_HOST:127.0.0.1}
+      port: ${CLAMAV_PORT:3310}
+      timeout-millis: ${CLAMAV_TIMEOUT_MS:10000}
+    headers:
+      content-security-policy: "${CONTENT_SECURITY_POLICY:default-src 'self'; img-src 'self' data: blob:; style-src 'self' 'unsafe-inline'; font-src 'self' data:; script-src 'self'; connect-src 'self' ws: wss:; object-src 'none'; base-uri 'self'; frame-ancestors 'none'; form-action 'self'}"
+  trash:
+    retention-days: ${TRASH_RETENTION_DAYS:30}
+    cleanup-cron: ${TRASH_CLEANUP_CRON:0 0 2 * * ?}
+  mail:
+    enabled: ${MAIL_ENABLED:false}
+    from: ${MAIL_FROM:}
+  verification:
+    debug-code: ${APP_VERIFICATION_DEBUG_CODE:true}
+    expire-minutes: ${VERIFICATION_EXPIRE_MINUTES:10}
+    cooldown-seconds: ${VERIFICATION_COOLDOWN_SECONDS:60}
+    daily-target-limit: ${VERIFICATION_DAILY_TARGET_LIMIT:10}
+    daily-ip-limit: ${VERIFICATION_DAILY_IP_LIMIT:30}
+  crdt:
+    admin-url: ${CRDT_ADMIN_URL:http://127.0.0.1:1235}
+    admin-secret: ${CRDT_ADMIN_SECRET:docflow-local-admin}
+
+logging:
+  level:
+    com.docflow: debug
+
+management:
+  server:
+    port: ${MANAGEMENT_PORT:9091}
+    address: ${MANAGEMENT_ADDRESS:127.0.0.1}
+  endpoints:
+    web:
+      base-path: /actuator
+      exposure:
+        include: health,info,prometheus
+  endpoint:
+    health:
+      show-details: never
+      probes:
+        enabled: true
+      group:
+        liveness:
+          include: livenessState,ping
+        readiness:
+          include: readinessState,db,redis
+  health:
+    livenessstate:
+      enabled: true
+    readinessstate:
+      enabled: true
+  metrics:
+    tags:
+      application: ${spring.application.name}
+      environment: ${APP_ENV:development}
+    distribution:
+      percentiles-histogram:
+        http.server.requests: true
+  prometheus:
+    metrics:
+      export:
+        enabled: ${PROMETHEUS_ENABLED:true}

@@ -1,0 +1,13 @@
+server {
+    listen 80;
+    server_name docflow.example.com;
+
+    location ^~ /.well-known/acme-challenge/ {
+        root /var/www/certbot;
+        default_type text/plain;
+    }
+
+    location / {
+        return 503;
+    }
+}

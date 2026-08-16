@@ -1,0 +1,22 @@
+[Unit]
+Description=DocFlow verified database and upload backup
+After=network-online.target mysql.service
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=docflow
+Group=docflow
+EnvironmentFile=/etc/docflow/backup.env
+ExecStart=/opt/docflow/deploy/scripts/backup.sh
+Nice=10
+IOSchedulingClass=best-effort
+IOSchedulingPriority=7
+PrivateTmp=true
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/var/backups/docflow /srv/docflow/uploads -/var/lib/node_exporter/textfile_collector
+
+[Install]
+WantedBy=multi-user.target

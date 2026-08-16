@@ -1,0 +1,14 @@
+version: 2
+updates:
+  - package-ecosystem: maven
+    directory: /docflow
+    schedule:
+      interval: weekly
+  - package-ecosystem: npm
+    directory: /docflow-web
+    schedule:
+      interval: weekly
+  - package-ecosystem: npm
+    directory: /docflow-collab
+    schedule:
+      interval: weekly

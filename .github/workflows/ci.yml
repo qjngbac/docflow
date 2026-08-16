@@ -1,0 +1,61 @@
+name: 持续集成
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  backend:
+    name: Java 测试
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+          cache: maven
+      - name: 运行 Maven 测试
+        working-directory: docflow
+        run: mvn -B test
+
+  collaboration:
+    name: CRDT 协作测试
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+          cache-dependency-path: docflow-collab/package-lock.json
+      - name: 安装依赖
+        working-directory: docflow-collab
+        run: npm ci
+      - name: 运行协作测试
+        working-directory: docflow-collab
+        run: npm test
+
+  frontend:
+    name: 前端测试与构建
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+          cache-dependency-path: docflow-web/package-lock.json
+      - name: 安装依赖
+        working-directory: docflow-web
+        run: npm ci
+      - name: 运行前端测试
+        working-directory: docflow-web
+        run: npm test
+      - name: 构建前端
+        working-directory: docflow-web
+        run: npm run build

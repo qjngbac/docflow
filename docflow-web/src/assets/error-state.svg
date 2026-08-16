@@ -1,0 +1,13 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256" role="img" aria-labelledby="title">
+  <title id="title">页面出错</title>
+  <circle cx="128" cy="118" r="82" fill="#fee2e2"/>
+  <path d="M128 54l63 112H65z" fill="#fff" stroke="#f87171" stroke-width="6" stroke-linejoin="round"/>
+  <path d="M128 88v40" stroke="#ef4444" stroke-width="10" stroke-linecap="round"/>
+  <circle cx="128" cy="147" r="6" fill="#ef4444"/>
+  <rect x="74" y="159" width="62" height="49" rx="12" fill="#94a3b8"/>
+  <rect x="83" y="168" width="44" height="27" rx="7" fill="#e2e8f0"/>
+  <circle cx="96" cy="181" r="4" fill="#475569"/><circle cx="114" cy="181" r="4" fill="#475569"/>
+  <path d="M98 190c5-4 10-4 15 0" stroke="#64748b" stroke-width="3" fill="none" stroke-linecap="round"/>
+  <path d="M72 174l-16-10M138 174l18-10" stroke="#94a3b8" stroke-width="8" stroke-linecap="round"/>
+  <path d="M164 158l14-12 13 14-14 12zM177 146l5-15M191 160l15-3" fill="none" stroke="#64748b" stroke-width="5" stroke-linecap="round"/>
+</svg>

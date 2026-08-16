@@ -1,0 +1,102 @@
+groups:
+  - name: docflow-availability
+    rules:
+      - alert: DocFlowJavaDown
+        expr: up{job="docflow-java"} == 0
+        for: 2m
+        labels:
+          severity: critical
+        annotations:
+          summary: DocFlow Java service is unavailable
+          description: Prometheus cannot scrape the Java management endpoint for two minutes.
+
+      - alert: DocFlowEndpointDown
+        expr: probe_success{job="docflow-probes"} == 0 or up{job="docflow-probes"} == 0
+        for: 2m
+        labels:
+          severity: critical
+        annotations:
+          summary: A DocFlow public or collaboration endpoint is unavailable
+          description: The probe for {{ $labels.instance }} has failed for two minutes.
+
+      - alert: DocFlowDependencyExporterDown
+        expr: up{job=~"mysql|redis|node"} == 0
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: A DocFlow infrastructure exporter is unavailable
+          description: Prometheus cannot scrape {{ $labels.job }} on {{ $labels.instance }}.
+
+  - name: docflow-application
+    rules:
+      - alert: DocFlowHighServerErrorRate
+        expr: |
+          sum(rate(http_server_requests_seconds_count{application="docflow-server",status=~"5.."}[5m]))
+          /
+          clamp_min(sum(rate(http_server_requests_seconds_count{application="docflow-server"}[5m])), 1)
+          > 0.05
+        for: 10m
+        labels:
+          severity: critical
+        annotations:
+          summary: DocFlow server error rate is above 5 percent
+          description: More than 5 percent of Java HTTP requests have returned 5xx for ten minutes.
+
+      - alert: DocFlowHighRequestLatency
+        expr: |
+          histogram_quantile(0.95,
+            sum by (le) (rate(http_server_requests_seconds_bucket{application="docflow-server"}[5m]))
+          ) > 2
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: DocFlow p95 request latency is above two seconds
+          description: The Java API p95 latency has remained high for ten minutes.
+
+      - alert: DocFlowJvmHeapPressure
+        expr: |
+          sum(jvm_memory_used_bytes{application="docflow-server",area="heap"})
+          /
+          clamp_min(sum(jvm_memory_max_bytes{application="docflow-server",area="heap"}), 1)
+          > 0.85
+        for: 15m
+        labels:
+          severity: warning
+        annotations:
+          summary: DocFlow JVM heap usage is above 85 percent
+          description: Sustained heap pressure may lead to long garbage collection pauses or an out-of-memory error.
+
+  - name: docflow-host-and-backup
+    rules:
+      - alert: DocFlowDiskSpaceLow
+        expr: |
+          node_filesystem_avail_bytes{fstype!~"tmpfs|overlay"}
+          /
+          node_filesystem_size_bytes{fstype!~"tmpfs|overlay"}
+          < 0.15
+        for: 15m
+        labels:
+          severity: warning
+        annotations:
+          summary: DocFlow host disk free space is below 15 percent
+          description: Filesystem {{ $labels.mountpoint }} on {{ $labels.instance }} is running out of space.
+
+      - alert: DocFlowBackupFailed
+        expr: docflow_backup_last_run_success == 0
+        for: 5m
+        labels:
+          severity: critical
+        annotations:
+          summary: The latest DocFlow backup failed
+          description: Inspect the backup service log and do not deploy until a verified backup succeeds.
+
+      - alert: DocFlowBackupStale
+        expr: time() - docflow_backup_last_success_timestamp_seconds > 93600 or absent(docflow_backup_last_success_timestamp_seconds)
+        for: 15m
+        labels:
+          severity: critical
+        annotations:
+          summary: No successful DocFlow backup in the last 26 hours
+          description: The daily verified backup is missing or stale.

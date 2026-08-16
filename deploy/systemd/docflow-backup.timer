@@ -1,0 +1,11 @@
+[Unit]
+Description=Run the DocFlow backup every day
+
+[Timer]
+OnCalendar=*-*-* 02:30:00
+RandomizedDelaySec=15m
+Persistent=true
+Unit=docflow-backup.service
+
+[Install]
+WantedBy=timers.target

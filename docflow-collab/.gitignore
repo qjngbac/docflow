@@ -1,0 +1,25 @@
+# 本地环境变量，可能包含密码
+.env
+.env.local
+.env.*.local
+
+# 保留配置模板
+!.env.example
+
+# Node.js 依赖
+node_modules/
+
+# 构建和测试产物
+dist/
+build/
+coverage/
+
+# 日志
+*.log
+logs/
+
+# 编辑器和系统文件
+.idea/
+.vscode/
+.DS_Store
+Thumbs.db

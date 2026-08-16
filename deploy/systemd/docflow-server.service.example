@@ -1,0 +1,23 @@
+[Unit]
+Description=DocFlow Spring Boot service
+After=network-online.target mysql.service redis.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=docflow
+Group=docflow
+EnvironmentFile=/etc/docflow/server.env
+WorkingDirectory=/opt/docflow/current
+ExecStart=/usr/bin/java -XX:MaxRAMPercentage=75 -jar /opt/docflow/current/docflow-server.jar
+Restart=on-failure
+RestartSec=5
+SuccessExitStatus=143
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/srv/docflow/uploads /var/log/docflow
+
+[Install]
+WantedBy=multi-user.target

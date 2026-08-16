@@ -1,0 +1,7 @@
+[client]
+host=127.0.0.1
+port=3306
+user=docflow_backup
+password=replace-in-private-server-file
+protocol=tcp
+default-character-set=utf8mb4

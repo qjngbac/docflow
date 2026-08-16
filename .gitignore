@@ -1,0 +1,57 @@
+# Local secrets and machine-specific configuration
+.env
+.env.*
+!.env.example
+application-local.yml
+application-production.yml
+*.keystore
+*.jks
+*.p12
+*.pem
+*.key
+
+# Build, dependency, runtime, and uploaded data
+**/target/
+**/node_modules/
+**/dist/
+**/coverage/
+**/.vite/
+**/.cache/
+**/uploads/
+**/*.log
+**/*.pid
+**/*.pid.lock
+**/*.tmp
+**/*.bak
+**/*.swp
+.npm-cache/
+m2repo/
+.m2/
+.tmp/
+.agents/
+docflow/.maven-settings.xml
+deploy/backup.env
+deploy/mysql-backup.cnf
+deploy/certificates/
+deploy/backups/
+deploy/releases/
+
+# IDE and OS files
+.idea/
+.vscode/
+*.iml
+.classpath
+.project
+.settings/
+.DS_Store
+Thumbs.db
+
+# Local databases, reports, and packaged releases
+*.db
+*.sqlite
+*.sqlite3
+*.hprof
+*.tar
+*.tar.gz
+*.zip
+zap-report.html

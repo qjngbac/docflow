@@ -1,0 +1,21 @@
+[Unit]
+Description=DocFlow Yjs collaboration service
+After=network-online.target mysql.service redis.service docflow-server.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=docflow
+Group=docflow
+EnvironmentFile=/etc/docflow/collab.env
+WorkingDirectory=/opt/docflow/current/docflow-collab
+ExecStart=/usr/bin/node /opt/docflow/current/docflow-collab/src/server.js
+Restart=on-failure
+RestartSec=5
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+
+[Install]
+WantedBy=multi-user.target
