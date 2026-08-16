@@ -23,7 +23,7 @@
         <mybatis-plus.version>3.5.6</mybatis-plus.version>
         <mysql.version>8.0.33</mysql.version>
         <druid.version>1.2.21</druid.version>
-        <jjwt.version>0.12.5</jjwt.version>
+        <jjwt.version>0.13.0</jjwt.version>
         <hutool.version>5.8.25</hutool.version>
         <minio.version>8.5.9</minio.version>
         <poi.version>5.2.5</poi.version>
