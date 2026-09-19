@@ -6,7 +6,8 @@
   "scripts": {
     "start": "node src/server.js",
     "dev": "node --watch src/server.js",
-    "test": "node --test"
+    "test": "node --test",
+    "postinstall": "node scripts/patch-hocuspocus-server.js"
   },
   "dependencies": {
     "@hocuspocus/extension-redis": "latest",

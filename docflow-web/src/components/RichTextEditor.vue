@@ -41,6 +41,7 @@ import { sanitizeHtml } from '../utils/contentConversion'
 import { confirmDialog, promptDialog } from '../utils/dialog'
 import 'katex/dist/katex.min.css'
 
+// 非 CRDT 富文本编辑器；协作文档使用功能更完整的 CrdtRichTextEditor。
 const props = defineProps({ modelValue: { type: String, default: '' } })
 const emit = defineEmits(['update:modelValue', 'change', 'upload-images'])
 const fileInput = ref(null)

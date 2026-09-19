@@ -12,6 +12,7 @@ import com.docflow.mapper.DocumentFavoriteMapper;
 import com.docflow.entity.DocumentFavorite;
 import com.docflow.mapper.DocPermissionMapper;
 import com.docflow.mapper.DocVersionMapper;
+import com.docflow.mapper.CrdtDataMapper;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -23,6 +24,7 @@ import java.util.List;
 import java.util.Set;
 import java.util.HashSet;
 
+/** 文档聚合服务，协调元数据、正文物化、文件夹、版本、回收站及关联数据。 */
 @Service
 public class DocService {
 
@@ -46,6 +48,8 @@ public class DocService {
     @Autowired private DocumentFavoriteMapper documentFavoriteMapper;
     @Autowired private HtmlSanitizer htmlSanitizer;
     @Autowired private DocumentCommentService documentCommentService;
+    @Autowired private CrdtDataMapper crdtDataMapper;
+    @Autowired private CrdtCheckpointService crdtCheckpointService;
     @Value("${app.trash.retention-days:30}") private int trashRetentionDays;
 
     public List<Document> list(Long userId, Long folderId, boolean includeDeleted, String scope, String category) {
@@ -186,12 +190,14 @@ public class DocService {
     }
 
     @Transactional
+    /** 仅供受共享密钥保护的协作服务回写物化HTML，用户请求不能直接调用。 */
     public void updateCrdtSnapshotFromCollaboration(Long docId, Long editorUserId, String html) {
         Document document = permissionService.requireDocument(docId);
         Long effectiveEditorId = editorUserId == null ? document.getOwnerId() : editorUserId;
         persistCrdtSnapshot(docId, effectiveEditorId, html, document);
     }
 
+    /** 净化CRDT导出的HTML并同步摘要、哈希、修订号和最后编辑信息。 */
     private void persistCrdtSnapshot(Long docId, Long userId, String html, Document document) {
         if (!"CRDT".equals(document.getCollabMode())) {
             throw new BusinessException(ErrorCode.CONFLICT, "Document is not in CRDT mode");
@@ -306,6 +312,7 @@ public class DocService {
         return collaborationService.mergeDraft(document);
     }
 
+    @Transactional
     public void moveToTrash(Long docId, Long userId) {
         Document document = permissionService.requireAdmin(docId, userId);
         collaborationService.flushDocument(docId);
@@ -313,16 +320,19 @@ public class DocService {
         document.setIsDeleted(1);
         document.setDeletedAt(LocalDateTime.now());
         documentMapper.updateById(document);
+        if ("CRDT".equals(document.getCollabMode())) crdtCheckpointService.disconnect(docId);
     }
 
+    @Transactional
     public void restore(Long docId, Long userId) {
-        Document document = permissionService.requireAdmin(docId, userId);
+        Document document = permissionService.requireAdminIncludingDeleted(docId, userId);
         document.setIsDeleted(0);
         document.setDeletedAt(null);
         documentMapper.updateById(document);
     }
 
     @Transactional
+    /** 物理删除文档及业务关联、CRDT增量和多代checkpoint；仅所有者可执行。 */
     public void purge(Long docId, Long userId) {
         Document document = documentMapper.selectById(docId);
         if (document == null || !userId.equals(document.getOwnerId())) {
@@ -332,6 +342,7 @@ public class DocService {
             throw new BusinessException(ErrorCode.BAD_REQUEST, "Document must be in trash before permanent deletion");
         }
         collaborationService.flushDocument(docId);
+        if ("CRDT".equals(document.getCollabMode())) crdtCheckpointService.disconnect(docId);
         attachmentService.deleteByDocument(docId);
         tagService.deleteRelations(docId);
         documentCommentService.deleteByDocument(docId);
@@ -341,6 +352,9 @@ public class DocService {
                 .eq(com.docflow.entity.DocPermission::getDocId, docId));
         documentFavoriteMapper.delete(new LambdaQueryWrapper<DocumentFavorite>()
                 .eq(DocumentFavorite::getDocId, docId));
+        crdtDataMapper.deleteUpdates(docId);
+        crdtDataMapper.deleteCheckpointHistory(docId);
+        crdtDataMapper.deleteCheckpoint(docId);
         documentMapper.deleteById(docId);
     }
 

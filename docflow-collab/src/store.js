@@ -1,6 +1,7 @@
 import mysql from 'mysql2/promise'
 import { encodeCheckpoint, PROTOCOL_VERSION, restoreDocument, updateId } from './crdt-state.js'
 
+// 协作服务直接持久化不透明 Yjs 二进制，不解析正文业务字段。
 export function createPool() {
   return mysql.createPool({
     host: process.env.DB_HOST || '127.0.0.1',
@@ -26,6 +27,7 @@ export class CrdtStore {
   }
 
   async appendUpdate(documentId, payload, clientId) {
+    // update_id 具有内容幂等性；INSERT IGNORE 让重复消息不会生成第二条增量。
     const id = updateId(documentId, payload)
     await this.pool.execute(
       `INSERT IGNORE INTO crdt_update
@@ -51,6 +53,7 @@ export class CrdtStore {
   }
 
   async loadWithMetadata(documentId) {
+    // 恢复顺序固定为最近 checkpoint，再按自增 ID 应用其后的全部增量。
     const [checkpointRows] = await this.pool.execute(
       'SELECT checkpoint_seq, payload FROM crdt_checkpoint WHERE doc_id = ?', [documentId]
     )
@@ -70,6 +73,7 @@ export class CrdtStore {
   }
 
   async checkpoint(documentId, document, sequenceOverride = null, reason = 'AUTO') {
+    // checkpoint、历史留档和已合并增量删除必须处于同一事务中。
     const connection = await this.pool.getConnection()
     try {
       const [rows] = await connection.execute(
@@ -153,6 +157,7 @@ export class CrdtStore {
   }
 
   async restoreCheckpoint(documentId, historyId) {
+    // 回滚前先保存当前 checkpoint，保留一次反向恢复的机会。
     const connection = await this.pool.getConnection()
     try {
       await connection.beginTransaction()
@@ -196,8 +201,10 @@ export class CrdtStore {
 
   async trimHistory(connection, documentId) {
     const limit = Math.max(2, Math.min(100, Number(process.env.CRDT_CHECKPOINT_HISTORY_LIMIT || 20)))
+    // LIMIT 不能作为绑定参数下发（MySQL 预处理协议会回 ER_WRONG_ARGUMENTS），这里与 listHistory 保持同样的拼接写法；
+    // limit 已由上面的 Math.max/Math.min 收敛为 2~100 的整数。
     const [rows] = await connection.execute(
-      'SELECT id FROM crdt_checkpoint_history WHERE doc_id = ? ORDER BY id DESC LIMIT ?', [documentId, limit]
+      `SELECT id FROM crdt_checkpoint_history WHERE doc_id = ? ORDER BY id DESC LIMIT ${limit}`, [documentId]
     )
     if (rows.length < limit) return
     const ids = rows.map(row => row.id)

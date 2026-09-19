@@ -16,6 +16,9 @@ import java.time.Instant;
 import java.util.HexFormat;
 import java.util.List;
 
+/**
+ * 按客户端 IP 和接口类别执行分钟级限流，并在进入业务控制器前拦截黑名单请求。
+ */
 @Component
 public class ApiRateLimitFilter extends OncePerRequestFilter {
     private final SecurityStateStore state;

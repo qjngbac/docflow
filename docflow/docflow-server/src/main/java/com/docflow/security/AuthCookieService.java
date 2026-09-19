@@ -14,6 +14,9 @@ import java.time.LocalDateTime;
 import java.time.ZoneId;
 import java.util.Base64;
 
+/**
+ * 统一读写认证 Cookie。访问令牌和刷新令牌对 JavaScript 不可见，CSRF Cookie 则供前端回传校验。
+ */
 @Component
 public class AuthCookieService {
     private static final SecureRandom RANDOM = new SecureRandom();

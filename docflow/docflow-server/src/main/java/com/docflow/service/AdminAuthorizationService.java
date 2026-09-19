@@ -8,6 +8,7 @@ import com.docflow.security.UserContext;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 
+/** 集中校验当前请求用户是否拥有系统管理员角色。 */
 @Service
 public class AdminAuthorizationService {
     @Autowired private UserMapper userMapper;

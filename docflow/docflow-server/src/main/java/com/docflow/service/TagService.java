@@ -12,6 +12,7 @@ import org.springframework.util.StringUtils;
 
 import java.util.*;
 
+/** 管理用户标签以及文档与标签之间的多对多关系。 */
 @Service
 public class TagService {
     @Autowired private TagMapper tagMapper;

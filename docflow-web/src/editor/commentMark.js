@@ -1,6 +1,7 @@
 import { Mark, mergeAttributes } from '@tiptap/core'
 import { Plugin, PluginKey } from '@tiptap/pm/state'
 
+// 批注正文存于后端；编辑器标记只保存批注 ID 和可点击的文本范围。
 export const CommentMark = Mark.create({
   name: 'comment',
   inclusive: false,

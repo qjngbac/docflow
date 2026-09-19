@@ -36,6 +36,10 @@ deploy/certificates/
 deploy/backups/
 deploy/releases/
 
+# Local assistant notes and local-only test assets
+.workbuddy/
+测试素材/
+
 # IDE and OS files
 .idea/
 .vscode/

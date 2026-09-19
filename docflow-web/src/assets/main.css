@@ -268,15 +268,27 @@ a:hover {
 }
 
 /* ========== 提示框 ========== */
-.toast {
+/* 提示统一挂在这个右上角容器里纵向排列；容器本身不拦截点击。 */
+.toast-container {
   position: fixed;
   top: 20px;
   right: 20px;
+  z-index: 10000;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 10px;
+  max-width: calc(100vw - 40px);
+  overflow: hidden;
+  pointer-events: none;
+}
+
+.toast {
   padding: 12px 20px;
   border-radius: var(--radius);
   color: white;
   font-size: 14px;
-  z-index: 10000;
+  pointer-events: auto;
   animation: slideIn 0.3s ease;
 }
 

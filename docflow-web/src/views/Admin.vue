@@ -65,6 +65,7 @@ import { confirmDialog } from '../utils/dialog'
 import { error, success } from '../utils/toast'
 import { buildAdminNotificationPayload, describeAdminNotificationTarget } from '../utils/adminNotification'
 
+// 管理页按标签延迟加载数据，所有写操作仍由后端管理员拦截器重新鉴权。
 const userStore=useUserStore(),currentUserId=computed(()=>userStore.user?.id)
 const tabs=[{key:'overview',label:'总览',icon:markRaw(BarChart3)},{key:'users',label:'用户',icon:markRaw(Users)},{key:'feedback',label:'反馈',icon:markRaw(MessageSquareWarning)},{key:'notifications',label:'提示',icon:markRaw(Megaphone)},{key:'templates',label:'模板',icon:markRaw(LayoutTemplate)},{key:'audit',label:'日志',icon:markRaw(ScrollText)},{key:'system',label:'系统状态',icon:markRaw(Settings)}]
 const overviewItems=[{key:'users',label:'用户总数',icon:markRaw(UserRound)},{key:'disabledUsers',label:'已封禁用户',icon:markRaw(Users)},{key:'documents',label:'正常文档',icon:markRaw(FileText)},{key:'trashDocuments',label:'回收站文档',icon:markRaw(Trash2)},{key:'openFeedback',label:'待处理反馈',icon:markRaw(ListChecks)},{key:'activeSessions',label:'有效登录设备',icon:markRaw(HardDrive)},{key:'attachments',label:'文档附件',icon:markRaw(Paperclip)},{key:'attachmentBytes',label:'附件占用',icon:markRaw(DatabaseBackup),bytes:true}]

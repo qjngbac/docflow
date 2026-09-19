@@ -21,6 +21,7 @@ import java.util.Optional;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
+/** 为私有上传文件生成短期签名地址，并校验访问时的路径、时效和签名。 */
 @Service
 public class SignedFileService {
     private static final Pattern MARKDOWN_FILE = Pattern.compile("(?<![A-Za-z0-9])(/files/[^\\s)\\]\\\"']+)");

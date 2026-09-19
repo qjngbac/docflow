@@ -10,6 +10,7 @@ import javax.crypto.SecretKey;
 import java.nio.charset.StandardCharsets;
 import java.util.Date;
 
+/** 负责签发和解析访问令牌及短效实时协作令牌。 */
 @Component
 public class JwtUtil {
 

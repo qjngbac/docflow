@@ -11,6 +11,7 @@ import org.springframework.beans.factory.annotation.Autowired;
 import java.nio.file.Path;
 import java.nio.file.Paths;
 
+/** 注册管理端拦截器，并按配置决定是否直接暴露本地上传目录。 */
 @Configuration
 public class WebMvcConfig implements WebMvcConfigurer {
 

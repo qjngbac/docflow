@@ -12,6 +12,7 @@ import org.springframework.web.multipart.MultipartFile;
 
 import java.util.List;
 
+/** 管理文档普通附件，并在每次操作前执行文档权限校验。 */
 @Service
 public class AttachmentService {
 

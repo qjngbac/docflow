@@ -21,11 +21,16 @@ import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 
+/**
+ * 处理 LEGACY 文本协作消息、在线成员广播和基于修订号的冲突反馈。
+ * CRDT 文档不会经过该处理器。
+ */
 @Slf4j
 @Component
 public class DocWebSocketHandler extends TextWebSocketHandler {
 
     private final ObjectMapper objectMapper = new ObjectMapper();
+    // 每个文档维护本节点上的连接集合，多节点 CRDT 广播由协作服务处理。
     private final Map<String, Set<WebSocketSession>> docSessions = new ConcurrentHashMap<>();
 
     @Autowired

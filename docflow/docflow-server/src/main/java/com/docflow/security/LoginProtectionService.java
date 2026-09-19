@@ -14,9 +14,13 @@ import java.util.HexFormat;
 import java.util.Locale;
 import java.util.UUID;
 
+/**
+ * 汇总账号和 IP 维度的失败次数，按阈值要求验证码或执行临时锁定。
+ */
 @Service
 public class LoginProtectionService {
     private static final SecureRandom RANDOM = new SecureRandom();
+    // 排除容易混淆的 0/O、1/I 等字符，降低人工输入错误率。
     private static final char[] CAPTCHA_CHARS = "23456789ABCDEFGHJKLMNPQRSTUVWXYZ".toCharArray();
 
     private final SecurityStateStore state;

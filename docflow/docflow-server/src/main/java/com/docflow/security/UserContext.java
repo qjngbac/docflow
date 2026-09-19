@@ -5,6 +5,7 @@ import com.docflow.common.ErrorCode;
 import lombok.AllArgsConstructor;
 import lombok.Data;
 
+/** 保存当前请求的认证用户；过滤器必须在请求结束时清理，避免线程复用造成身份串扰。 */
 public final class UserContext {
 
     private static final ThreadLocal<CurrentUser> HOLDER = new ThreadLocal<>();

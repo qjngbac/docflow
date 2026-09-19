@@ -1,3 +1,4 @@
+// “记住我”写入 localStorage，否则使用随标签页关闭而清除的 sessionStorage。
 const AUTH_KEYS = ['token', 'refreshToken', 'user', 'authMeta', 'lastActivityAt', 'authenticated', 'cookieAuth']
 
 function availableStorages() {
@@ -53,6 +54,7 @@ export function saveAuth(authData, rememberMe = Boolean(authData?.rememberMe)) {
   clearStoredAuth()
   const storage = rememberMe ? localStorage : sessionStorage
   const token = authData?.accessToken || authData?.token || ''
+  // 启用 HttpOnly Cookie 时只保存会话标记，不把令牌再复制到浏览器存储。
   if (token && !authData?.cookieAuth) storage.setItem('token', token)
   if (authData?.refreshToken && !authData?.cookieAuth) storage.setItem('refreshToken', authData.refreshToken)
   if (authData?.user) storage.setItem('user', JSON.stringify(authData.user))

@@ -68,7 +68,7 @@ import ProfileDialog from '../components/ProfileDialog.vue'
 import CreateDocumentDialog from '../components/CreateDocumentDialog.vue'
 import GlobalSearchDialog from '../components/GlobalSearchDialog.vue'
 import FeedbackDialog from '../components/FeedbackDialog.vue'
-import { notificationApi, userApi } from '../api'
+import { docApi, notificationApi, userApi } from '../api'
 import { useDocStore, useUserStore } from '../store'
 import { error, success } from '../utils/toast'
 import { confirmDialog } from '../utils/dialog'
@@ -78,6 +78,7 @@ const router = useRouter()
 const route = useRoute()
 const userStore = useUserStore()
 const docStore = useDocStore()
+// Layout 维护登录后的全局外壳：导航、会话空闲检测、搜索、通知和侧栏状态。
 const sidebarOpen = ref(false)
 const sidebarCollapsed = ref(localStorage.getItem('docflow:sidebar-collapsed') === 'true')
 const profileOpen = ref(false)
@@ -161,6 +162,7 @@ function handleGlobalShortcut(event) {
   }
 }
 async function checkSession() {
+  // 客户端空闲计时用于及时退出；服务端 session 校验仍是最终依据。
   if (loggingOut || !userStore.isLoggedIn) return
   const now = Date.now()
   const meta = getAuthMeta()
@@ -207,9 +209,29 @@ async function submitFolder() {
   } catch (exception) { error(exception.message || '文件夹保存失败') }
   finally { folderDialog.saving = false }
 }
+function collectFolderSubtree(node, ids = new Set()) {
+  ids.add(node.id)
+  for (const child of node.children || []) collectFolderSubtree(child, ids)
+  return ids
+}
+async function folderDeletionSummary(folder) {
+  // 用现有接口统计影响范围：子文件夹数取自已加载的文件夹树，文档数取自"全部文档"列表。
+  // 删除语义是把内容上提到上一级（不删内容），所以必须让用户先看到会影响多少东西。
+  const subtree = collectFolderSubtree(folder)
+  let documents = 0
+  try {
+    const response = await docApi.list({})
+    documents = (response.data || []).filter(item => subtree.has(item.folderId)).length
+  } catch { /* 统计失败就只提示文件夹数量 */ }
+  return { folders: subtree.size - 1, documents }
+}
 async function handleDeleteFolder(folder) {
-  if (!(await confirmDialog(`确定删除文件夹“${folder.name}”吗？`, { title: '删除文件夹', confirmText: '删除', danger: true }))) return
-  try { await docStore.deleteFolder(folder.id); success('文件夹已删除') }
+  const summary = await folderDeletionSummary(folder)
+  const scope = summary.folders || summary.documents
+    ? `其中 ${summary.documents} 个文档、${summary.folders} 个子文件夹会被移到上一级（内容不会被删除）。`
+    : '这个文件夹是空的。'
+  if (!(await confirmDialog(`确定删除文件夹“${folder.name}”吗？${scope}`, { title: '删除文件夹', confirmText: '删除', danger: true }))) return
+  try { await docStore.deleteFolder(folder.id); success('文件夹已删除，里面的内容已移到上一级') }
   catch (exception) { error(exception.message || '删除失败') }
 }
 </script>

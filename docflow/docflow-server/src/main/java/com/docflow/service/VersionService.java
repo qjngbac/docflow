@@ -14,6 +14,7 @@ import org.springframework.transaction.annotation.Transactional;
 import java.time.LocalDateTime;
 import java.util.List;
 
+/** 创建历史版本、内容对比和回滚；CRDT回滚同时替换权威Y.Doc。 */
 @Service
 public class VersionService {
 
@@ -28,6 +29,9 @@ public class VersionService {
 
     @Autowired
     private HtmlSanitizer htmlSanitizer;
+
+    @Autowired
+    private CrdtCheckpointService crdtCheckpointService;
 
     public void createSnapshot(Document document, Long userId) {
         createSnapshot(document, userId, "AUTO");
@@ -142,6 +146,10 @@ public class VersionService {
         document.setContentHash(DocumentContentUtils.sha256(version.getContent()));
         document.setLastPersistedAt(LocalDateTime.now());
         documentMapper.updateById(document);
+
+        if ("CRDT".equals(document.getCollabMode())) {
+            crdtCheckpointService.replaceContent(docId, document.getContent());
+        }
 
         createSnapshot(document, userId, "ROLLBACK");
         return document;

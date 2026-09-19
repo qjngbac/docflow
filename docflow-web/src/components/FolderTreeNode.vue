@@ -28,6 +28,7 @@ const props = defineProps({ folder: { type: Object, required: true }, level: { t
 const emit = defineEmits(['select', 'create', 'edit', 'delete', 'move'])
 const docStore = useDocStore()
 const expanded = ref(true)
+// 拖拽数据只传源文件夹 ID，父子循环等有效性最终由后端校验。
 const draggingId = ref(null)
 function startDrag(event) { draggingId.value = props.folder.id; event.dataTransfer.setData('text/folder-id', String(props.folder.id)); event.dataTransfer.effectAllowed = 'move' }
 function dropFolder(event) { const sourceId = Number(event.dataTransfer.getData('text/folder-id')); if (sourceId && sourceId !== props.folder.id) emit('move', { sourceId, parentId: props.folder.id }) }

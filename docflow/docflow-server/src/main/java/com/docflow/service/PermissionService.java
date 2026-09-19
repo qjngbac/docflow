@@ -7,9 +7,11 @@ import com.docflow.dto.ShareRequest;
 import com.docflow.entity.DocPermission;
 import com.docflow.entity.Document;
 import com.docflow.entity.User;
+import com.docflow.entity.OperationLog;
 import com.docflow.mapper.DocPermissionMapper;
 import com.docflow.mapper.DocumentMapper;
 import com.docflow.mapper.UserMapper;
+import com.docflow.mapper.OperationLogMapper;
 import com.docflow.vo.ShareVO;
 import lombok.AllArgsConstructor;
 import lombok.Data;
@@ -17,6 +19,7 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import com.docflow.security.SignedFileService;
+import com.docflow.security.ClientIpResolver;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.util.StringUtils;
 
@@ -26,7 +29,13 @@ import java.time.LocalDateTime;
 import java.util.List;
 import java.util.HexFormat;
 import java.util.Locale;
+import com.fasterxml.jackson.databind.ObjectMapper;
+import org.springframework.web.context.request.RequestContextHolder;
+import org.springframework.web.context.request.ServletRequestAttributes;
 
+/**
+ * 文档权限的唯一业务入口：所有者拥有隐式最高权限，协作者和分享链接使用显式权限记录。
+ */
 @Service
 public class PermissionService {
 
@@ -45,12 +54,41 @@ public class PermissionService {
     @Autowired
     private SignedFileService signedFileService;
 
+    @Autowired
+    private CrdtCheckpointService crdtCheckpointService;
+
+    @Autowired
+    private OperationLogMapper operationLogMapper;
+
+    @Autowired
+    private ObjectMapper objectMapper;
+
+    @Autowired
+    private ClientIpResolver clientIpResolver;
+
     private final SecureRandom secureRandom = new SecureRandom();
 
+    /** 常规访问统一隐藏回收站文档，防止旧链接或旧连接继续读取。 */
     public Document requireDocument(Long docId) {
+        Document document = requireDocumentIncludingDeleted(docId);
+        if (Integer.valueOf(1).equals(document.getIsDeleted())) {
+            throw new BusinessException(ErrorCode.NOT_FOUND, "Document not found");
+        }
+        return document;
+    }
+
+    public Document requireDocumentIncludingDeleted(Long docId) {
         Document document = documentMapper.selectById(docId);
         if (document == null) {
             throw new BusinessException(ErrorCode.NOT_FOUND, "Document not found");
+        }
+        return document;
+    }
+
+    public Document requireAdminIncludingDeleted(Long docId, Long userId) {
+        Document document = requireDocumentIncludingDeleted(docId);
+        if (!canAdmin(document, userId)) {
+            throw new BusinessException(ErrorCode.FORBIDDEN, "No document admin permission");
         }
         return document;
     }
@@ -124,6 +162,7 @@ public class PermissionService {
         }
 
         docPermissionMapper.insert(permission);
+        audit(operatorId, docId, "PERMISSION_SHARE_CREATE", request.getUserId(), null, permission.getPermission());
 
         ShareVO vo = new ShareVO();
         vo.setToken(permission.getShareToken());
@@ -174,8 +213,13 @@ public class PermissionService {
         String permission = normalizePermission(permissionName);
         DocPermission existing = findCollaborator(docId, user.getId());
         if (existing != null) {
+            String oldPermission = existing.getPermission();
             existing.setPermission(permission);
             docPermissionMapper.updateById(existing);
+            if (!permission.equals(oldPermission)) {
+                crdtCheckpointService.disconnect(docId);
+                audit(operatorId, docId, "PERMISSION_COLLABORATOR_UPDATE", user.getId(), oldPermission, permission);
+            }
             return existing;
         }
 
@@ -185,6 +229,7 @@ public class PermissionService {
         collaborator.setPermission(permission);
         collaborator.setCreatedBy(operatorId);
         docPermissionMapper.insert(collaborator);
+        audit(operatorId, docId, "PERMISSION_COLLABORATOR_ADD", user.getId(), null, permission);
         return collaborator;
     }
 
@@ -213,8 +258,14 @@ public class PermissionService {
                                  Long collaboratorUserId, String permissionName) {
         requireAdmin(docId, operatorId);
         DocPermission collaborator = requireCollaborator(docId, collaboratorUserId);
-        collaborator.setPermission(normalizePermission(permissionName));
+        String oldPermission = collaborator.getPermission();
+        String newPermission = normalizePermission(permissionName);
+        if (newPermission.equals(oldPermission)) return;
+        collaborator.setPermission(newPermission);
         docPermissionMapper.updateById(collaborator);
+        crdtCheckpointService.disconnect(docId);
+        audit(operatorId, docId, "PERMISSION_COLLABORATOR_UPDATE", collaboratorUserId,
+                oldPermission, newPermission);
     }
 
     @Transactional
@@ -222,6 +273,9 @@ public class PermissionService {
         requireAdmin(docId, operatorId);
         DocPermission collaborator = requireCollaborator(docId, collaboratorUserId);
         docPermissionMapper.deleteById(collaborator.getId());
+        crdtCheckpointService.disconnect(docId);
+        audit(operatorId, docId, "PERMISSION_COLLABORATOR_REMOVE", collaboratorUserId,
+                collaborator.getPermission(), null);
     }
 
     public List<Long> listAccessibleDocIds(Long userId) {
@@ -286,6 +340,25 @@ public class PermissionService {
         permission.setSharePassword(passwordEncoder.encode(rawPassword));
         docPermissionMapper.updateById(permission);
         return true;
+    }
+
+    /** 权限变更与业务事务共同写入结构化操作日志，便于安全追溯。 */
+    private void audit(Long operatorId, Long docId, String action, Long targetUserId,
+                       String oldPermission, String newPermission) {
+        OperationLog log = new OperationLog();
+        log.setUserId(operatorId);
+        log.setDocId(docId);
+        log.setAction(action);
+        var detail = objectMapper.createObjectNode();
+        if (targetUserId != null) detail.put("targetUserId", targetUserId);
+        if (oldPermission != null) detail.put("oldPermission", oldPermission);
+        if (newPermission != null) detail.put("newPermission", newPermission);
+        log.setDetail(detail.toString());
+        if (RequestContextHolder.getRequestAttributes() instanceof ServletRequestAttributes attributes) {
+            log.setIp(clientIpResolver.resolve(attributes.getRequest()));
+        }
+        log.setCreatedAt(LocalDateTime.now());
+        operationLogMapper.insert(log);
     }
 
     @Data

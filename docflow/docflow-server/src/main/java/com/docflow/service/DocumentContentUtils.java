@@ -5,6 +5,7 @@ import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
 import java.util.HexFormat;
 
+/** 识别当前文档正文是 Markdown 还是富文本，并生成列表页使用的纯文本摘要。 */
 final class DocumentContentUtils {
 
     private DocumentContentUtils() {

@@ -16,6 +16,7 @@ import org.springframework.util.StringUtils;
 import java.nio.charset.StandardCharsets;
 
 @Slf4j
+/** 生成邮件验证码并在发送成功后写入验证码存储，避免失败邮件留下可用验证码。 */
 @Service
 public class VerificationMailService {
 

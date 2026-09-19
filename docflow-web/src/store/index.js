@@ -130,6 +130,7 @@ export const useDocStore = defineStore('doc', () => {
   }
 
   function rememberCreatedDoc(doc) {
+    // 创建后先更新当前视图，避免返回工作区时必须重新请求或手动刷新。
     if (!doc?.id || viewMode.value !== 'documents' || Boolean(doc.isDeleted)) return
     const docFolderId = Number(doc.folderId || 0)
     if (docFolderId !== Number(currentFolderId.value || 0)) return
@@ -137,6 +138,7 @@ export const useDocStore = defineStore('doc', () => {
   }
 
   function rememberUpdatedDoc(doc) {
+    // 编辑页返回的最新标题和时间同时合并到列表缓存与当前文档。
     if (!doc?.id) return
     const index = docs.value.findIndex(item => item.id === doc.id)
     if (index >= 0) docs.value[index] = { ...docs.value[index], ...doc }

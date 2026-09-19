@@ -44,6 +44,9 @@ import javax.xml.transform.dom.DOMSource;
 import javax.xml.transform.stream.StreamResult;
 
 @Slf4j
+/**
+ * 对DOCX ZIP容器执行安全校验，再把段落、字符样式、列表、表格、链接和图片转为安全HTML。
+ */
 @Service
 public class DocxImportService {
 

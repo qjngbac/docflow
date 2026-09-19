@@ -13,6 +13,9 @@ import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.atomic.AtomicBoolean;
 
+/**
+ * 保存限流、验证码和登录锁定状态。优先使用 Redis，多节点生产环境可配置为 Redis 故障时拒绝请求。
+ */
 @Slf4j
 @Component
 public class SecurityStateStore {

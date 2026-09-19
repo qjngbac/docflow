@@ -9,6 +9,7 @@ import org.springframework.stereotype.Component;
 import java.util.Set;
 
 @Slf4j
+/** 定期把旧版协作模式暂存在 Redis 的修订内容持久化到 MySQL。 */
 @Component
 public class CollaborationPersistenceScheduler {
 

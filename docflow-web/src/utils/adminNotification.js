@@ -1,3 +1,4 @@
+/** 校验管理员提示的目标范围，并移除与当前范围无关的筛选字段。 */
 export function buildAdminNotificationPayload(form) {
   const targetType = String(form?.targetType || '').trim().toUpperCase()
   const content = String(form?.content || '').trim()

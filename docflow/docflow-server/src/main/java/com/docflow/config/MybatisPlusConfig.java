@@ -6,6 +6,7 @@ import org.springframework.stereotype.Component;
 
 import java.time.LocalDateTime;
 
+/** 统一填充实体的创建时间和更新时间字段。 */
 @Component
 public class MybatisPlusConfig implements MetaObjectHandler {
 

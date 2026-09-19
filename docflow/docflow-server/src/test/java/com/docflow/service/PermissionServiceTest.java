@@ -6,13 +6,17 @@ import com.docflow.entity.DocPermission;
 import com.docflow.mapper.DocPermissionMapper;
 import com.docflow.mapper.DocumentMapper;
 import com.docflow.mapper.UserMapper;
+import com.docflow.mapper.OperationLogMapper;
 import com.docflow.security.SignedFileService;
+import com.docflow.security.ClientIpResolver;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.InjectMocks;
 import org.mockito.Mock;
+import org.mockito.Spy;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.security.crypto.password.PasswordEncoder;
+import com.fasterxml.jackson.databind.ObjectMapper;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
@@ -29,6 +33,10 @@ class PermissionServiceTest {
     @Mock private UserMapper userMapper;
     @Mock private PasswordEncoder passwordEncoder;
     @Mock private SignedFileService signedFileService;
+    @Mock private CrdtCheckpointService crdtCheckpointService;
+    @Mock private OperationLogMapper operationLogMapper;
+    @Spy private ObjectMapper objectMapper = new ObjectMapper();
+    @Mock private ClientIpResolver clientIpResolver;
 
     @InjectMocks private PermissionService permissionService;
 
@@ -51,6 +59,34 @@ class PermissionServiceTest {
         assertThatThrownBy(() -> permissionService.requireReadable(30L, 5L))
                 .isInstanceOfSatisfying(BusinessException.class,
                         exception -> assertThat(exception.getCode()).isEqualTo(403));
+    }
+
+    @Test
+    void deletedDocumentCannotBeReadEvenByOwner() {
+        Document document = document(30L, 4L);
+        document.setIsDeleted(1);
+        when(documentMapper.selectById(30L)).thenReturn(document);
+
+        assertThatThrownBy(() -> permissionService.requireReadable(30L, 4L))
+                .isInstanceOfSatisfying(BusinessException.class,
+                        exception -> assertThat(exception.getCode()).isEqualTo(404));
+    }
+
+    @Test
+    void permissionChangeDisconnectsExistingCollaboratorConnection() {
+        Document document = document(30L, 4L);
+        DocPermission permission = new DocPermission();
+        permission.setId(12L);
+        permission.setDocId(30L);
+        permission.setUserId(5L);
+        permission.setPermission("WRITE");
+        when(documentMapper.selectById(30L)).thenReturn(document);
+        when(docPermissionMapper.selectOne(any())).thenReturn(permission);
+
+        permissionService.updatePermission(30L, 4L, 5L, "READ");
+
+        verify(crdtCheckpointService).disconnect(30L);
+        verify(operationLogMapper).insert(any());
     }
 
     @Test

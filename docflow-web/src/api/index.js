@@ -16,6 +16,7 @@ const refreshClient = axios.create({
   baseURL: '/api/v1', timeout: 15000, withCredentials: true, withXSRFToken: true,
   xsrfCookieName: 'XSRF-TOKEN', xsrfHeaderName: 'X-XSRF-TOKEN', headers: { 'Content-Type': 'application/json' }
 })
+// 多个请求同时遇到 401 时共用一次刷新，避免刷新令牌被并发轮换后互相失效。
 let refreshPromise = null
 
 api.interceptors.request.use(config => {
@@ -40,12 +41,34 @@ async function refreshAccessToken() {
   if (!refreshPromise) {
     refreshPromise = refreshClient.post('/auth/refresh', refreshToken ? { refreshToken } : {}).then(response => {
       const payload = response.data
-      if (!payload || payload.code !== 200 || (!payload.data?.accessToken && !payload.data?.cookieAuth)) throw new Error('Refresh rejected')
+      if (!payload || payload.code !== 200 || (!payload.data?.accessToken && !payload.data?.cookieAuth)) {
+        // refreshClient 没有响应拦截器，业务错误会以 HTTP 200 + 非 200 业务码返回，这里把业务码带上供上层判断。
+        const rejection = new Error('Refresh rejected')
+        rejection.authCode = payload?.code
+        throw rejection
+      }
       updateStoredTokens(payload.data)
       return payload.data.accessToken || null
     }).finally(() => { refreshPromise = null })
   }
   return refreshPromise
+}
+
+// 只有服务端明确判定会话失效时才结束登录态；限流(429)、5xx 或网络抖动不应把用户踢下线。
+function isSessionRejected(exception) {
+  if (exception?.response?.status === 401) return true
+  return exception?.authCode === 401
+}
+
+/** 导出接口用 responseType:'blob'，错误响应体同样是 Blob，直接取 .message 只会得到 undefined。 */
+async function readBlobMessage(data) {
+  if (typeof Blob === 'undefined' || !(data instanceof Blob)) return ''
+  try {
+    const parsed = JSON.parse(await data.text())
+    return typeof parsed?.message === 'string' ? parsed.message : ''
+  } catch {
+    return ''
+  }
 }
 
 async function retryAfterRefresh(config) {
@@ -55,7 +78,7 @@ async function retryAfterRefresh(config) {
   try {
     accessToken = await refreshAccessToken()
   } catch (exception) {
-    expireLogin()
+    if (isSessionRejected(exception)) expireLogin()
     throw exception
   }
   config.headers = { ...(config.headers || {}) }
@@ -64,6 +87,7 @@ async function retryAfterRefresh(config) {
   return api(config)
 }
 
+// 所有接口都在此处统一处理业务错误和登录过期，页面组件只接收规范化结果。
 function expireLogin() {
   clearAuth()
   if (router.currentRoute.value.name !== 'Login') router.push({ path: '/login', query: { reason: 'expired' } })
@@ -77,6 +101,20 @@ function rejectBusinessError(payload) {
 api.interceptors.response.use(
   async response => {
     const payload = response.data
+    if (typeof Blob !== 'undefined' && payload instanceof Blob) {
+      // 导出类接口用 responseType:'blob'。后端失败时会返回「HTTP 200 + 业务错误码 JSON」（项目统一约定），
+      // 若直接把它交给下载逻辑，用户拿到的会是内容为 JSON 的假文档，所以这里必须先识别出来。
+      const contentType = response.headers?.['content-type'] || payload.type || ''
+      if (contentType.includes('application/json')) {
+        try {
+          const parsed = JSON.parse(await payload.text())
+          if (parsed && typeof parsed.code === 'number' && parsed.code !== 200) {
+            return rejectBusinessError(parsed)
+          }
+        } catch { /* 不是合法 JSON，按普通文件返回 */ }
+      }
+      return payload
+    }
     if (payload && typeof payload.code === 'number' && payload.code !== 200) {
       if (payload.code === 401 && canRefresh(response.config)) {
         return retryAfterRefresh(response.config)
@@ -92,9 +130,13 @@ api.interceptors.response.use(
     } else if (status === 401) {
       expireLogin()
     }
+    const rawMessage = error.response?.data?.message
+    const message = typeof rawMessage === 'string' && rawMessage
+      ? rawMessage
+      : await readBlobMessage(error.response?.data)
     return Promise.reject({
       code: status || 0,
-      message: httpErrorMessage(status, error.response?.data?.message || error.message),
+      message: httpErrorMessage(status, message || error.message),
       cause: error
     })
   }
@@ -130,6 +172,7 @@ export const userApi = {
 }
 
 export async function getRealtimeAccessToken() {
+  // Cookie 登录下普通访问令牌不可被脚本读取，因此另取用途受限的短效协作令牌。
   const stored = getAccessToken()
   if (stored) return stored
   const response = await userApi.realtimeToken()

@@ -1,3 +1,4 @@
+/** 把 Java 返回的权限写入服务端连接上下文，客户端不能覆盖 user 或 readOnly。 */
 export function applyInitialAccess(data, access) {
   data.connectionConfig.readOnly = !access.writable
   return {

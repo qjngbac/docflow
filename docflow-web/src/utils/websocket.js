@@ -1,3 +1,4 @@
+/** 旧版修订号协作客户端；负责消息分发和指数退避重连，不参与 CRDT 文档。 */
 export class CollabWebSocket {
   constructor(docId, token) {
     this.docId = docId
@@ -40,6 +41,7 @@ export class CollabWebSocket {
       this.emit('offline')
       return
     }
+    // 指数退避上限为 30 秒，避免服务故障时所有客户端持续高频重连。
     const delay = Math.min(1000 * (2 ** this.reconnectAttempts), 30000)
     this.reconnectTimer = setTimeout(() => {
       this.reconnectAttempts += 1

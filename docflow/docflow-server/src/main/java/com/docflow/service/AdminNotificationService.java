@@ -14,6 +14,7 @@ import java.time.LocalDateTime;
 import java.util.List;
 import java.util.Locale;
 
+/** 按全部用户、指定用户或注册时间范围下发管理员站内通知。 */
 @Service
 public class AdminNotificationService {
     private static final int MAX_CONTENT_LENGTH = 500;

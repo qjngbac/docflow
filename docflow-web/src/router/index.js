@@ -31,6 +31,7 @@ const routes = [
 const router = createRouter({ history: createWebHistory(), routes })
 
 router.beforeEach(to => {
+  // 前端守卫只负责导航体验；后端仍会独立校验登录态和管理员权限。
   const authenticated = hasAuthSession()
   if (to.meta.requiresAuth && !authenticated) return '/login'
   if (to.meta.admin && getStoredUser()?.systemRole !== 'ADMIN') return '/'

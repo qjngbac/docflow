@@ -40,7 +40,7 @@
       <button type="button" title="折叠或展开当前标题" :disabled="!editable||!editor.isActive('heading')" @click="editor.chain().focus().toggleHeadingCollapse().run()"><FoldVertical :size="16"/></button>
       <template v-if="editor.isActive('table')"><span/><button type="button" title="合并所选单元格" :disabled="!editable" @click="editor.chain().focus().mergeCells().run()"><Combine :size="16"/></button><button type="button" title="拆分单元格" :disabled="!editable" @click="editor.chain().focus().splitCell().run()"><Split :size="16"/></button><button type="button" title="在上方插入行" :disabled="!editable" @click="editor.chain().focus().addRowBefore().run()"><BetweenHorizontalStart :size="16"/></button><button type="button" title="在下方插入行" :disabled="!editable" @click="editor.chain().focus().addRowAfter().run()"><BetweenHorizontalEnd :size="16"/></button><button type="button" title="删除当前行" :disabled="!editable" @click="editor.chain().focus().deleteRow().run()"><Rows3 :size="16" class="delete-tool"/></button><button type="button" title="增大当前行高度" :disabled="!editable" @click="changeRowHeight(12)"><ChevronsDown :size="16"/></button><button type="button" title="减小当前行高度" :disabled="!editable" @click="changeRowHeight(-12)"><ChevronsUp :size="16"/></button><button type="button" title="在左侧插入列" :disabled="!editable" @click="editor.chain().focus().addColumnBefore().run()"><BetweenVerticalStart :size="16"/></button><button type="button" title="在右侧插入列" :disabled="!editable" @click="editor.chain().focus().addColumnAfter().run()"><BetweenVerticalEnd :size="16"/></button><button type="button" title="删除当前列" :disabled="!editable" @click="editor.chain().focus().deleteColumn().run()"><Columns3 :size="16" class="delete-tool"/></button><button type="button" title="删除整个表格" :disabled="!editable" @click="editor.chain().focus().deleteTable().run()"><Trash2 :size="16"/></button><button type="button" title="按当前列升序" :disabled="!editable" @click="sortCurrentTable(1)"><ArrowDownAZ :size="16"/></button><button type="button" title="按当前列降序" :disabled="!editable" @click="sortCurrentTable(-1)"><ArrowUpAZ :size="16"/></button></template>
     </div>
-    <div class="rich-content" @wheel="handlePaperWheel">
+    <div class="rich-content" ref="contentScroller" @scroll="scheduleAnchorCapture" @wheel="handlePaperWheel">
       <div v-show="!spreadEditing" class="document-paper" :class="{ 'paged-editing': pagedEditing }" :style="{zoom:paperZoom}">
         <div v-if="pagedEditing" class="page-furniture" aria-hidden="true"><div v-for="page in paginationPageCount" :key="page" class="page-furniture-item" :style="pageFurnitureStyle(page)"><div class="page-margin-mask page-margin-mask-top"></div><div class="page-margin-mask page-margin-mask-bottom"></div><div class="page-header-text">{{pageSettings?.pageHeader||''}}</div><div class="page-footer-text"><span>{{pageSettings?.pageFooter||''}}</span><span>{{page}} / {{paginationPageCount}}</span></div></div></div>
         <EditorContent :editor="editor" class="editor-host"/>
@@ -81,11 +81,15 @@ import { BlockFormatting, Citation, DocflowTextStyle, EnhancedBlockMath, Enhance
 import { getRealtimeAccessToken, referenceApi } from '../api'
 import { confirmDialog, promptDialog } from '../utils/dialog'
 import { friendlyMessage } from '../utils/friendlyMessage'
+import { clipboardImageFiles } from '../utils/clipboardImages'
+import { collectCommentEvents, createCommentEvent } from '../utils/collaborationEvents'
+import { crdtDocumentKey } from '../utils/crdtStorage'
 import MathFieldEditor from './MathFieldEditor.vue'
 import katex from 'katex'
 import 'katex/contrib/mhchem'
 import 'katex/dist/katex.min.css'
 
+// 该组件把 Tiptap 的 ProseMirror 文档绑定到 Y.Doc，并集中处理协作感知、分页和高级格式。
 const props = defineProps({
   docId: { type: Number, required: true },
   user: { type: Object, required: true },
@@ -94,7 +98,7 @@ const props = defineProps({
   commentsOpen: { type: Boolean, default: false },
   pageSettings: { type: Object, default: () => ({}) }
 })
-const emit = defineEmits(['status', 'users', 'change', 'upload-images', 'add-comment', 'comment-click', 'page-format-change', 'page-settings-change'])
+const emit = defineEmits(['status', 'users', 'change', 'upload-images', 'add-comment', 'comment-click', 'comment-event', 'page-format-change', 'page-settings-change'])
 const fileInput = ref(null)
 const selectionEmpty = ref(true)
 const trackChanges = ref(false)
@@ -105,6 +109,7 @@ let reconnectProgress = 0
 let reconnectTimer = null
 let changeEmitTimer = null
 let renumbering = false
+const seenCommentEvents = new Set()
 const specialCharacters = ['©', '®', '™', '±', '×', '÷', '∞', '≈', '≠', '≤', '≥', '°', '℃', '→', '←', '※', '§']
 const formulaTabs = [{ key: 'common', label: '常用' }, { key: 'greek', label: '希腊字母' }, { key: 'matrix', label: '矩阵与多行' }, { key: 'chem', label: '化学式' }]
 const formulaSymbols = {
@@ -133,6 +138,7 @@ const formulaPreview = computed(() => {
   try { return katex.renderToString(formulaPanel.latex, { throwOnError: false, displayMode: formulaPanel.block, strict: false }) } catch { return '<span>公式格式有误</span>' }
 })
 const paperStyle = computed(() => {
+  // 页面尺寸始终按真实毫米计算，缩放只作用于外层视觉，不改变分页测量基准。
   const letter = props.pageSettings?.pageFormat === 'LETTER'
   const paperHeight = letter ? 279 : 297
   const pageCount = Math.max(1, paginationPageCount.value)
@@ -155,8 +161,9 @@ const paperStyle = computed(() => {
     '--page-gap': '18px', '--paged-min-height': `calc(${paperHeight * pageCount}mm + ${(pageCount - 1) * 18}px)`
   }
 })
+// IndexedDB 保存离线增量，Hocuspocus 负责与服务端同一个 Y.Doc 合并和同步。
 const ydoc = new Y.Doc()
-const localPersistence = new IndexeddbPersistence(`docflow:crdt:${props.docId}`, ydoc)
+const localPersistence = new IndexeddbPersistence(crdtDocumentKey(props.docId), ydoc)
 const protocol = location.protocol === 'https:' ? 'wss:' : 'ws:'
 const url = import.meta.env.VITE_CRDT_URL || `${protocol}//${location.hostname}:1234`
 const provider = new HocuspocusProvider({
@@ -168,7 +175,12 @@ const provider = new HocuspocusProvider({
   onStatus: ({ status }) => handleProviderStatus(status),
   onSynced: ({ state }) => { if (state !== false) { pendingChanges.value = 0; emitReliability('synced') } },
   onUnsyncedChanges: ({ number }) => { pendingChanges.value = number; emitReliability(provider.status || 'connected') },
-  onAwarenessUpdate: ({ states }) => emit('users', states.map(state => state.user).filter(Boolean)),
+  onAwarenessUpdate: ({ states }) => {
+    // Awareness 只承载在线用户、光标和短期通知，不作为持久化正文来源。
+    const values = states instanceof Map ? [...states.values()] : Array.from(states || [])
+    emit('users', values.map(state => state.user).filter(Boolean))
+    collectCommentEvents(values, seenCommentEvents).forEach(event => emit('comment-event', event))
+  },
   onAuthenticationFailed: () => emitReliability('unauthorized')
 })
 
@@ -181,6 +193,26 @@ function editFormula(node, pos, block) {
 
 const editor = useEditor({
   editable: props.editable,
+  editorProps: {
+    handlePaste: (_view, event) => {
+      if (!props.editable) return false
+      const files = clipboardImageFiles(event.clipboardData)
+      if (!files.length) return false
+      event.preventDefault()
+      emit('upload-images', files, urls => urls.forEach(src => editor.value?.chain().focus().setImage({ src }).run()))
+      return true
+    },
+    // ProseMirror 在文档更新后可能要求"把选区滚进视口"（prosemirror-view 的 scrollToSelection →
+    // scrollRectIntoView，会直接改写滚动容器的 scrollTop）。
+    // y-tiptap 应用远端更新时正是带 scrollIntoView 的事务，于是对方一编辑就会把本地视口
+    // 硬拽回本地光标处——而用户常常已经滚到别处阅读，表现就是"视口突然跳到固定位置"。
+    // 判据：只有"本地意图"（打字/粘贴/点目录跳转）刚刚发生时，才允许按默认行为滚动。
+    handleScrollToSelection: view => {
+      if (performance.now() - localIntentAt < 400) return false
+      restoreViewportAnchor(viewportAnchor)
+      return true
+    }
+  },
   extensions: [
     StarterKit.configure({ undoRedo: false, link: { openOnClick: false }, underline: {} }),
     LazyImage.configure({ inline: false, allowBase64: false }),
@@ -212,7 +244,25 @@ const editor = useEditor({
     Collaboration.configure({ document: ydoc, field: 'default' }),
     CollaborationCaret.configure({ provider, user: props.user })
   ],
+  onCreate: ({ editor: instance }) => {
+    scheduleAnchorCapture()
+    // 本地输入/粘贴/拖放/mousedown 都标记为"本地意图"，用于区分"该不该把选区滚进视口"。
+    ;['beforeinput', 'keydown', 'paste', 'drop', 'mousedown', 'compositionstart'].forEach(type =>
+      instance.view.dom.addEventListener(type, markLocalIntent, { capture: true }))
+  },
   onSelectionUpdate: ({ editor: instance }) => { selectionEmpty.value = instance.state.selection.empty; if (formatBrush.value && !instance.state.selection.empty) applyFormatBrush() },
+  onTransaction: ({ editor: instance, transaction }) => {
+    const selection = instance.state.selection
+    // 判定"不是本地输入"：本地输入一定移动光标，且会进入撤销栈（addToHistory 不为 false）；
+    // 远端改动两者至少满足其一。
+    const selectionStable = Boolean(previousSelection) && previousSelection.eq(selection)
+    const fromRemote = transaction.getMeta('addToHistory') === false
+    previousSelection = selection
+    if (!transaction.docChanged || !(selectionStable || fromRemote) || !pagedEditing.value) return
+    // 分页重算会增删占位块、改变文档总高度，把用户正在看的段落顶走；按视口锚点贴回原处。
+    restoreViewportAnchor(viewportAnchor)
+    requestAnimationFrame(() => restoreViewportAnchor(viewportAnchor))
+  },
   onUpdate: ({ editor: instance }) => { renumberEquations(instance); clearTimeout(changeEmitTimer); changeEmitTimer = setTimeout(() => emit('change', instance.getHTML()), 180) }
 })
 
@@ -543,17 +593,68 @@ function applyAllChanges(action) {
 }
 function addComment(commentId) { if (!commentId || !editor.value || editor.value.state.selection.empty) return false; return editor.value.chain().focus().setMark('comment', { commentId: String(commentId) }).run() }
 function removeComment(commentId) { if (!editor.value) return; const id=String(commentId);const { tr, doc }=editor.value.state;doc.descendants((node,pos)=>{if(!node.isText)return;node.marks.filter(mark=>mark.type.name==='comment'&&String(mark.attrs.commentId)===id).forEach(mark=>tr.removeMark(pos,pos+node.nodeSize,mark))});if(tr.docChanged)editor.value.view.dispatch(tr) }
-function focusComment(commentId) { if (!editor.value) return false;const id=String(commentId);let found=null;editor.value.state.doc.descendants((node,pos)=>{if(found||!node.isText)return;const match=node.marks.some(mark=>mark.type.name==='comment'&&String(mark.attrs.commentId)===id);if(match)found={from:pos,to:pos+node.nodeSize}});if(!found)return false;editor.value.chain().focus().setTextSelection(found).scrollIntoView().run();return true }
+function focusComment(commentId) { markLocalIntent(); if (!editor.value) return false;const id=String(commentId);let found=null;editor.value.state.doc.descendants((node,pos)=>{if(found||!node.isText)return;const match=node.marks.some(mark=>mark.type.name==='comment'&&String(mark.attrs.commentId)===id);if(match)found={from:pos,to:pos+node.nodeSize}});if(!found)return false;editor.value.chain().focus().setTextSelection(found).scrollIntoView().run();return true }
+function broadcastCommentEvent(action, commentId) { const event=createCommentEvent(action,commentId,ydoc.clientID);seenCommentEvents.add(event.id);provider.setAwarenessField('commentEvent',event) }
+const contentScroller = ref(null)
+// 分页占位块（widget 装饰器）会随内容变化增删，改变文档总高度；此时 scrollTop 不变、内容却整体位移，
+// 表现就是"别人一改，我这边跳到别的页"。这里记录"视口顶部对应的文档位置"，在重算后把它贴回原处。
+let viewportAnchor = null
+let anchorFrame = 0
+let previousSelection = null
+// 记录"本地意图"（打字、粘贴、点目录/批注跳转）的时间点。
+// 用途见下面的 handleScrollToSelection：远端更新也会请求"把选区滚进视口"，
+// 而用户往往已经滚到别处阅读，这时必须拒绝，否则视口会被硬拽回光标处。
+let localIntentAt = 0
+function markLocalIntent() { localIntentAt = performance.now() }
+// 强制与协作服务重新建连并重新同步；用于"状态疑似不同步"时手动对齐（服务端才是权威状态）。
+function reconnect() {
+  try {
+    provider.disconnect()
+    setTimeout(() => { try { provider.connect() } catch { /* 组件已销毁 */ } }, 0)
+  } catch { /* 连接已销毁 */ }
+}
+function scheduleAnchorCapture() {
+  if (anchorFrame) return
+  anchorFrame = requestAnimationFrame(() => {
+    anchorFrame = 0
+    const scroller = contentScroller.value; const view = editor.value?.view
+    if (!scroller || !view) return
+    try {
+      const box = scroller.getBoundingClientRect()
+      const found = view.posAtCoords({ left: box.left + 24, top: box.top + 6 })
+      if (found) viewportAnchor = found.pos
+    } catch { /* 测量失败就保持上一次锚点 */ }
+  })
+}
+function restoreViewportAnchor(position) {
+  const scroller = contentScroller.value; const view = editor.value?.view
+  if (!scroller || !view || position == null) return
+  try {
+    const safe = Math.max(0, Math.min(position, view.state.doc.content.size))
+    const delta = view.coordsAtPos(safe).top - scroller.getBoundingClientRect().top
+    if (Math.abs(delta) > 1) scroller.scrollTop += delta
+  } catch { /* 锚点位置已失效 */ }
+  scheduleAnchorCapture()
+}
+
+async function clearLocalState() {  // 失去写权限或访问权限时调用：本地 IndexedDB 里可能残留"服务端已拒绝写入"的分叉，
+  // 若不清掉，下次打开会先看到这份本地内容，日后恢复写权限还可能被合并回服务端。
+  // 索引库只是服务端状态的镜像，清掉不会丢服务端数据。
+  try { await localPersistence.clearData() } catch { /* 清理失败不影响当前会话 */ }
+}
 function setContent(html) { if (!props.editable || !editor.value) return false; editor.value.commands.setContent(html || '<p></p>'); return true }
 function replaceText(query,replacement,replaceAll=false){if(!props.editable||!query||!editor.value)return 0;const root=document.createElement('div');root.innerHTML=editor.value.getHTML();const walker=document.createTreeWalker(root,NodeFilter.SHOW_TEXT);let node,count=0;while((node=walker.nextNode())){if(!node.nodeValue?.includes(query))continue;if(replaceAll){count+=node.nodeValue.split(query).length-1;node.nodeValue=node.nodeValue.split(query).join(replacement)}else{node.nodeValue=node.nodeValue.replace(query,replacement);count=1;break}}if(count)editor.value.commands.setContent(root.innerHTML);return count}
 function getOutline() { const result=[];editor.value?.state.doc.descendants((node,pos)=>{if(node.type.name==='heading')result.push({pos,level:node.attrs.level,text:node.textContent,collapsed:Boolean(node.attrs.collapsed)})});return result }
-function focusHeading(index){const item=getOutline()[index];if(!item)return false;editor.value?.chain().focus().setTextSelection(item.pos+1).scrollIntoView().run();return true}
+function focusHeading(index){markLocalIntent();const item=getOutline()[index];if(!item)return false;editor.value?.chain().focus().setTextSelection(item.pos+1).scrollIntoView().run();return true}
 function toggleHeading(index){const item=getOutline()[index];if(!item||!editor.value)return false;const node=editor.value.state.doc.nodeAt(item.pos);editor.value.view.dispatch(editor.value.state.tr.setNodeMarkup(item.pos,undefined,{...node.attrs,collapsed:!node.attrs.collapsed}));return true}
-defineExpose({ addComment, focusComment, removeComment, replaceText, setContent, applyAllChanges, getOutline, focusHeading, toggleHeading, insertCitation, getHtml: () => editor.value?.getHTML() || '' })
+defineExpose({ addComment, focusComment, removeComment, broadcastCommentEvent, replaceText, setContent, clearLocalState, reconnect, applyAllChanges, getOutline, focusHeading, toggleHeading, insertCitation, getHtml: () => editor.value?.getHTML() || '' })
 </script>
 
 <style scoped>
-.rich-editor{height:100%;display:flex;flex-direction:column;background:white}.rich-toolbar,.advanced-toolbar{min-height:42px;display:flex;align-items:center;gap:3px;overflow-x:auto;padding:4px 8px;border-bottom:1px solid var(--border);background:white}.advanced-toolbar{min-height:38px;background:#fbfcfe}.rich-toolbar button,.advanced-toolbar button{width:32px;height:32px;flex:0 0 auto;display:grid;place-items:center;border:0;border-radius:4px;background:transparent;color:#4b5563;cursor:pointer;font-size:11px;font-weight:700}.rich-toolbar button:hover,.rich-toolbar button.active,.advanced-toolbar button:hover,.advanced-toolbar button.active{background:var(--primary-light);color:var(--primary)}.rich-toolbar button:disabled,.advanced-toolbar button:disabled,.advanced-toolbar select:disabled{opacity:.45;cursor:not-allowed}.rich-toolbar>span,.advanced-toolbar>span{width:1px;height:22px;flex:0 0 auto;margin:0 4px;background:var(--border)}.advanced-toolbar select{height:30px;flex:0 0 auto;border:1px solid var(--border);border-radius:4px;background:white;color:var(--text-secondary);font-size:11px}.rich-content{box-sizing:border-box;flex:1;min-height:0;overflow-x:auto;overflow-y:scroll;overscroll-behavior:contain;scrollbar-gutter:stable;padding:20px max(20px,calc((100% - var(--paper-width) - 15px)/2)) 48px;background:#eef2f6;scrollbar-color:#7c8da3 #dfe7f0;scrollbar-width:auto}.rich-content::-webkit-scrollbar{width:14px;height:14px}.rich-content::-webkit-scrollbar-track{background:#dfe7f0}.rich-content::-webkit-scrollbar-thumb{min-height:56px;border:3px solid #dfe7f0;border-radius:7px;background:#7c8da3}.rich-content::-webkit-scrollbar-thumb:hover{background:#52657c}.rich-content::-webkit-scrollbar-corner{background:#dfe7f0}.hidden-input{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0,0,0,0)}
+.rich-editor{height:100%;display:flex;flex-direction:column;background:white}.rich-toolbar,.advanced-toolbar{min-height:42px;display:flex;align-items:center;gap:3px;overflow-x:auto;padding:4px 8px;border-bottom:1px solid var(--border);background:white}.advanced-toolbar{min-height:38px;background:#fbfcfe}.rich-toolbar button,.advanced-toolbar button{width:32px;height:32px;flex:0 0 auto;display:grid;place-items:center;border:0;border-radius:4px;background:transparent;color:#4b5563;cursor:pointer;font-size:11px;font-weight:700}.rich-toolbar button:hover,.rich-toolbar button.active,.advanced-toolbar button:hover,.advanced-toolbar button.active{background:var(--primary-light);color:var(--primary)}.rich-toolbar button:disabled,.advanced-toolbar button:disabled,.advanced-toolbar select:disabled{opacity:.45;cursor:not-allowed}.rich-toolbar>span,.advanced-toolbar>span{width:1px;height:22px;flex:0 0 auto;margin:0 4px;background:var(--border)}.advanced-toolbar select{height:30px;flex:0 0 auto;border:1px solid var(--border);border-radius:4px;background:white;color:var(--text-secondary);font-size:11px}/* 水平留白固定为 20px：水平居中由 .document-paper / .spread-grid 各自的 margin:0 auto 负责。
+   之前这里按单页宽度算对称留白（(100% - --paper-width - 15px)/2），双页模式下内容是两页宽，
+   留白会挤掉可用宽度，把并排的两页整体推向右侧、右边一页被裁掉。 */
+.rich-content{box-sizing:border-box;flex:1;min-height:0;overflow-x:auto;overflow-y:scroll;overscroll-behavior:contain;scrollbar-gutter:stable;padding:20px 20px 48px;background:#eef2f6;scrollbar-color:#7c8da3 #dfe7f0;scrollbar-width:auto}.rich-content::-webkit-scrollbar{width:14px;height:14px}.rich-content::-webkit-scrollbar-track{background:#dfe7f0}.rich-content::-webkit-scrollbar-thumb{min-height:56px;border:3px solid #dfe7f0;border-radius:7px;background:#7c8da3}.rich-content::-webkit-scrollbar-thumb:hover{background:#52657c}.rich-content::-webkit-scrollbar-corner{background:#dfe7f0}.hidden-input{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0,0,0,0)}
 .page-count{flex:0 0 auto;padding-right:5px;color:var(--text-muted);font-size:11px;white-space:nowrap}
 .advanced-toolbar .zoom-indicator{width:auto;min-width:46px;padding:0 6px;color:var(--text-secondary);font-weight:600}
 .document-paper{position:relative;box-sizing:border-box;width:var(--paper-width);min-height:var(--paper-height);margin:0 auto;padding:var(--margin-top) var(--margin-right) var(--margin-bottom) var(--margin-left);border:1px solid #cbd5e1;background:white;box-shadow:0 2px 10px rgba(15,23,42,.08);transform-origin:top center}
@@ -572,4 +673,7 @@ defineExpose({ addComment, focusComment, removeComment, replaceText, setContent,
 .reference-panel{width:min(760px,100%)}.reference-import{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:6px;margin:9px 0}.reference-import.manual-reference{grid-template-columns:minmax(120px,.7fr) minmax(160px,1.2fr) minmax(150px,1fr) auto}.reference-import input{min-width:0;padding:8px;border:1px solid var(--border);border-radius:4px}.reference-import button,.reference-items button{border:1px solid var(--border);border-radius:4px;background:white;cursor:pointer}.reference-import button{padding:7px 10px}.reference-items{display:grid;gap:6px;max-height:260px;overflow:auto}.reference-items article{display:flex;align-items:center;justify-content:space-between;gap:10px;padding:9px;border:1px solid var(--border);border-radius:5px}.reference-items article>div:first-child{display:grid;gap:2px;min-width:0}.reference-items span,.reference-items small{overflow:hidden;color:var(--text-secondary);font-size:12px;text-overflow:ellipsis;white-space:nowrap}.reference-items small{color:var(--text-muted);font-size:10px}.reference-items article>div:last-child{display:flex;gap:5px}.reference-items button{min-width:32px;padding:5px 7px}.reference-items .danger{color:var(--danger)}.reference-note{color:var(--text-muted);font-size:12px}.footnote-manager{margin-top:16px;padding-top:12px;border-top:1px solid var(--border)}.footnote-manager h3{margin:0 0 8px;font-size:13px}.footnote-manager p{margin:5px 0;font-size:12px}.footnote-manager strong{margin-right:6px;color:var(--primary)}
 .quick-dialog,.page-settings-dialog{width:min(440px,100%);padding:16px;border-radius:8px;background:white;box-shadow:0 18px 60px rgba(15,23,42,.24)}.quick-dialog header,.page-settings-dialog header{display:flex;align-items:center;justify-content:space-between;margin-bottom:12px}.quick-dialog header button,.page-settings-dialog header button{border:0;background:transparent;cursor:pointer}.quick-dialog>p{margin:0 0 12px;color:var(--text-secondary);font-size:12px;line-height:1.6}.quick-dialog label,.page-settings-dialog label{display:grid;gap:6px;color:var(--text-secondary);font-size:12px;font-weight:600}.quick-dialog textarea,.quick-dialog select,.page-settings-dialog input,.page-settings-dialog select{box-sizing:border-box;width:100%;padding:8px;border:1px solid var(--border);border-radius:4px;background:white;resize:vertical}.quick-dialog footer,.page-settings-dialog footer{display:flex;justify-content:flex-end;gap:7px;margin-top:14px}.quick-dialog footer button,.page-settings-dialog footer button{min-height:32px;padding:5px 11px;border:1px solid var(--border);border-radius:4px;background:white;cursor:pointer}.quick-dialog footer .primary,.page-settings-dialog footer .primary{border-color:var(--primary);background:var(--primary);color:white}.page-settings-dialog{display:grid;gap:11px}.page-margin-grid{display:grid;grid-template-columns:1fr 1fr;gap:8px}.dialog-error{margin:8px 0 0;color:#b91c1c;font-size:12px}
 @media(max-width:700px){.rich-content{padding:10px 8px 30px}.document-paper,.document-paper.paged-editing{width:100%;min-width:0;min-height:calc(100vh - 142px);padding:28px 22px;background:white;background-image:none}.document-paper.paged-editing .editor-host{position:relative;inset:auto;width:100%;height:auto;min-height:calc(100vh - 198px);background:white;box-shadow:none}.document-paper.paged-editing :deep(.tiptap){height:auto;min-height:calc(100vh - 198px);column-width:auto;column-count:1}.spread-grid{grid-template-columns:var(--paper-width)}.spread-page:last-child:nth-child(odd){grid-column:auto}.reference-import,.reference-import.manual-reference{grid-template-columns:1fr}.reference-import button{width:100%}}
+/* 分页占位块是临时插入的 widget，不能作为浏览器的滚动锚点：
+   否则它们一增删，浏览器就丢失锚点、整屏内容跳位。 */
+:deep(.pagination-page-spacer),:deep(.pagination-inline-spacer),:deep(.pagination-table-cell-spacer){overflow-anchor:none}
 </style>

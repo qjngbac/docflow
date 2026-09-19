@@ -15,6 +15,9 @@ import org.springframework.web.util.UriComponentsBuilder;
 
 import java.util.Map;
 
+/**
+ * 在旧版协作 WebSocket 握手阶段完成 JWT、会话状态和文档读权限校验。
+ */
 @Component
 public class JwtHandshakeInterceptor implements HandshakeInterceptor {
 

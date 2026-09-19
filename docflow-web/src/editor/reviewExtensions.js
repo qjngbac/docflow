@@ -1,6 +1,7 @@
 import { Extension, Mark, mergeAttributes } from '@tiptap/core'
 import { Plugin, PluginKey } from '@tiptap/pm/state'
 
+// 修订信息作为文档标记随 CRDT 内容同步，而不是保存在某个客户端的本地状态中。
 export const ReviewChange = Mark.create({
   name: 'reviewChange',
   inclusive: false,
@@ -33,6 +34,7 @@ export const ParagraphAttribution = Extension.create({
     return [new Plugin({
       key: new PluginKey('paragraph-attribution'),
       appendTransaction: (transactions, oldState, newState) => {
+        // 跳过插件自身和 Yjs 同步产生的事务，避免递归标记或把远端修改记到本地用户。
         if (!transactions.some(t => t.docChanged) || transactions.some(t => t.getMeta('attribution') || t.getMeta('y-sync$'))) return null
         const user = this.options.user?.()
         if (!user?.id) return null
@@ -72,6 +74,7 @@ export const ChangeTracking = Extension.create({
       },
       props: {
         handleKeyDown: (view, event) => {
+          // 审阅模式下删除动作转换成 delete 标记，等待接受或拒绝后再真正移除。
           if (!this.options.enabled?.() || !['Backspace', 'Delete'].includes(event.key)) return false
           const { from, to, empty } = view.state.selection
           let start = from; let end = to

@@ -4,6 +4,7 @@ import { Decoration, DecorationSet } from '@tiptap/pm/view'
 
 const paginationKey = new PluginKey('docflowPagination')
 
+// 分页装饰只改变屏幕布局，不写入 ProseMirror/Yjs 文档，避免不同浏览器测量值污染正文。
 function decorationFor(spec) {
   if (spec.type === 'manual') {
     return Decoration.node(spec.from, spec.to, {
@@ -42,6 +43,7 @@ function decorationFor(spec) {
 }
 
 function paragraphBreakPosition(element, documentFrom, documentTo, boundaryY) {
+  // 逐行测量文本，找到跨页段落中第一行越过正文下边界的位置。
   const walker = document.createTreeWalker(element, NodeFilter.SHOW_TEXT)
   let textOffset = 0
   let lineTop = null
@@ -76,6 +78,7 @@ function measure(view, options) {
   if (!paper) return { pageCount: 1, specs: [] }
   if (options.isEnabled?.() === false) return { pageCount: null, specs: [] }
 
+  // 在屏幕外克隆页面进行测量，防止测量过程引起当前编辑器滚动和闪烁。
   const clone = paper.cloneNode(true)
   clone.classList.add('pagination-measurement')
   const paperStyles = getComputedStyle(paper)
@@ -157,6 +160,7 @@ function measure(view, options) {
       const tableElement = child.matches('table') ? child : child.querySelector(':scope > table')
       const tableNode = view.state.doc.nodeAt(positions[index].from)
       if (tableElement && tableNode?.type.name === 'table') {
+        // 表格按行分页；无法放入单页的超高行允许跨页，避免内容被吞掉。
         const rows = [...tableElement.rows]
         const rowPositions = []
         const rowCellContentPositions = []

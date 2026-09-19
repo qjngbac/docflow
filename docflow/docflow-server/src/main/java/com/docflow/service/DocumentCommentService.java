@@ -19,6 +19,7 @@ import java.util.Set;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
+/** 保存批注讨论线程、处理解决状态，并为回复和@提及创建通知。 */
 @Service
 public class DocumentCommentService {
     @Autowired private DocumentCommentMapper commentMapper;

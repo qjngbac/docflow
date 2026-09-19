@@ -28,6 +28,7 @@ import java.util.Base64;
 import java.util.List;
 import java.util.Locale;
 
+/** 将净化后的文档HTML转换为DOCX或PDF，并处理纸张设置和受控图片。 */
 @Service
 public class DocumentExportService {
     @Autowired private PermissionService permissionService;
@@ -107,6 +108,7 @@ public class DocumentExportService {
         run.setText(title == null || title.isBlank() ? "Untitled Document" : title);
     }
 
+    /** 按块级HTML节点映射标题、列表、表格、引用、代码和分页等Word结构。 */
     private void appendBlock(XWPFDocument word, Element element) {
         String tag = element.normalName();
         if (element.hasClass("page-break") || "page-break".equals(element.attr("data-type"))) {
@@ -168,6 +170,7 @@ public class DocumentExportService {
         }
     }
 
+    /** 递归继承行内样式，生成对应XWPFRun并保留链接、图片和常用格式。 */
     private void appendInline(XWPFParagraph paragraph, List<Node> nodes, Style style) {
         for (Node node : nodes) {
             if (node instanceof TextNode textNode) {

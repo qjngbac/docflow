@@ -51,6 +51,7 @@ const selectedIndex = ref(0)
 const selectedUser = ref(null)
 const results = ref({ documents: [], folders: [], users: [] })
 let timer = 0
+// 用递增请求号丢弃较慢的旧响应，防止快速输入时结果被覆盖回上一关键词。
 let requestId = 0
 
 const groupedResults = computed(() => [

@@ -2,10 +2,19 @@
 # Never commit real SMTP credentials.
 app:
   environment: development
+  export:
+    timeout-millis: ${EXPORT_TIMEOUT_MS:120000}
+    executor:
+      core-size: ${EXPORT_EXECUTOR_CORE_SIZE:2}
+      max-size: ${EXPORT_EXECUTOR_MAX_SIZE:4}
+      queue-capacity: ${EXPORT_EXECUTOR_QUEUE_CAPACITY:20}
   auth:
-    idle-timeout-minutes: 30
+    # Session policy: 12h idle window for a normal sign-in, 7 days for temporary devices,
+    # 90 days when "keep me signed in on this device" is ticked. The idle window is the
+    # binding limit in practice, so raise it before raising the absolute day counts.
+    idle-timeout-minutes: 720
     session-days: 7
-    remember-days: 30
+    remember-days: 90
     touch-interval-seconds: 60
     cookie:
       # Keep false for simple local Postman work. Production should use true behind HTTPS.

@@ -17,6 +17,7 @@ import org.springframework.security.web.header.writers.StaticHeadersWriter;
 import org.springframework.security.web.SecurityFilterChain;
 import org.springframework.security.web.authentication.UsernamePasswordAuthenticationFilter;
 
+/** 定义公开接口、认证过滤器顺序以及生产安全响应头。 */
 @Configuration
 @EnableWebSecurity
 public class SecurityConfig {

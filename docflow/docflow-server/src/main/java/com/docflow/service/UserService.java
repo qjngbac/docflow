@@ -14,6 +14,7 @@ import org.springframework.util.StringUtils;
 import java.time.LocalDateTime;
 import java.nio.charset.StandardCharsets;
 
+/** 处理注册登录、个人资料、密码和头像等用户业务。 */
 @Service
 public class UserService {
 

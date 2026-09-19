@@ -1,3 +1,4 @@
+// 后端保留稳定的业务错误语义，前端在此统一转换为用户可理解的中文提示。
 const exactMessages = new Map([
   ['No document admin permission', '你没有管理此文档的权限'],
   ['No document edit permission', '你没有编辑此文档的权限'],

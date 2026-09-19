@@ -26,6 +26,7 @@ import java.util.Comparator;
 import java.util.HexFormat;
 import java.util.UUID;
 
+/** 负责大附件分片会话、分片落盘、顺序合并和过期临时文件清理。 */
 @Service
 public class AttachmentUploadService {
     private static final long MAX_CHUNK_BYTES = 8L * 1024 * 1024;
@@ -75,6 +76,7 @@ public class AttachmentUploadService {
     }
 
     @Transactional
+    /** 合并前验证分片完整性，合并成功后才创建正式附件记录并删除临时目录。 */
     public FileAttachment complete(Long docId, String sessionId, Long userId) {
         AttachmentUploadSession session = requireSession(docId, sessionId, userId);
         if (countChunks(session) != session.getTotalChunks()) throw new BusinessException(ErrorCode.CONFLICT, "Not all upload chunks have arrived");

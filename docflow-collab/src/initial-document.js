@@ -11,6 +11,7 @@ const allowedTags = [
 ]
 
 export function createInitialDocument(access) {
+  // 旧正文先净化并转换为 Tiptap JSON，再建立新文档的初始 Yjs 状态。
   const source = access.initialContent || ''
   const html = access.initialContentFormat === 'MARKDOWN' ? marked.parse(source) : source
   const safe = sanitizeHtml(html, {
@@ -25,6 +26,17 @@ export function createInitialDocument(access) {
   })
   const json = generateJSON(safe || '<p></p>', editorExtensions)
   return TiptapTransformer.toYdoc(json, 'default', editorExtensions)
+}
+
+export function replaceDocumentContent(target, replacement) {
+  // 只替换约定的 default 片段，保留目标 Y.Doc 的客户端身份和同步关系。
+  const targetFragment = target.getXmlFragment('default')
+  const replacementFragment = replacement.getXmlFragment('default')
+  const children = replacementFragment.toArray().map(node => node.clone())
+  target.transact(() => {
+    if (targetFragment.length) targetFragment.delete(0, targetFragment.length)
+    if (children.length) targetFragment.insert(0, children)
+  }, 'docflow-version-rollback')
 }
 
 export function documentToHtml(document) {

@@ -99,6 +99,34 @@ test('checkpoint failure rolls back and does not delete increments', async () =>
   assert.ok(!calls.some(call => typeof call === 'string' && call.startsWith('DELETE')))
 })
 
+test('checkpoint never binds LIMIT as a prepared-statement parameter', async () => {
+  // MySQL 预处理协议会拒绝把 LIMIT 当作绑定参数下发（ER_WRONG_ARGUMENTS: Incorrect arguments to
+  // mysqld_stmt_execute），因此 trimHistory 必须像 listHistory 一样把已收敛为 2~100 的整数拼进 SQL。
+  // 这条断言用来防止 LIMIT ? 再次出现——它会让手动恢复点、历史回滚和自动压缩全部失败。
+  const statements = []
+  const connection = {
+    execute: async (sql, values) => {
+      statements.push({ sql, values })
+      if (sql.includes('MAX(id)')) return [[{ high_water: 9 }]]
+      if (sql.includes('FROM crdt_checkpoint WHERE')) {
+        return [[{ protocol_version: 1, checkpoint_seq: 0, payload: Buffer.from([1]) }]]
+      }
+      if (sql.startsWith('SELECT')) return [[{ id: 7 }]]
+      return [{}]
+    },
+    beginTransaction: async () => {},
+    commit: async () => {},
+    rollback: async () => {},
+    release: () => {}
+  }
+  const store = new CrdtStore({ getConnection: async () => connection })
+  await store.checkpoint(5, new Y.Doc())
+  const boundLimit = statements.filter(entry => /LIMIT\s*\?/i.test(entry.sql))
+  assert.deepEqual(boundLimit, [], `LIMIT 不能作为绑定参数下发: ${boundLimit.map(entry => entry.sql).join(' | ')}`)
+  assert.ok(statements.some(entry => entry.sql.startsWith('SELECT id FROM crdt_checkpoint_history')),
+    'checkpoint 应当执行历史清理查询')
+})
+
 test('oversized binary messages are rejected before application', () => {
   assert.throws(() => validateUpdateSize(new Uint8Array(1025), 1024), /message limit/)
   assert.doesNotThrow(() => validateUpdateSize(new Uint8Array(1024), 1024))

@@ -1,3 +1,4 @@
+// 用应用内可访问模态框替代浏览器 alert/confirm/prompt，保持交互与中文提示一致。
 function openDialog({
   title = '请确认',
   message = '',

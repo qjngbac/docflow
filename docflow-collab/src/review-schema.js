@@ -1,5 +1,6 @@
 import { Extension, Mark, mergeAttributes } from '@tiptap/core'
 
+// 审阅标记属于共享文档结构，服务端转换 HTML 时必须保留作者和修改类型。
 export const ReviewChange = Mark.create({
   name: 'reviewChange', inclusive: false,
   addAttributes: () => ({

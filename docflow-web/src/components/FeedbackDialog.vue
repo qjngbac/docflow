@@ -50,6 +50,7 @@ const form = reactive({ type: 'BUG', description: '' }); const previews = ref([]
 
 watch(() => props.open, value => { if (value) tab.value = 'submit'; else clearPreviews() })
 function selectImages(event) {
+  // 预览使用临时 Object URL，移除图片或关闭窗口时必须主动释放。
   const files = [...(event.target.files || [])]; event.target.value = ''
   for (const file of files) {
     if (previews.value.length >= 6) return error('一次最多上传 6 张图片')

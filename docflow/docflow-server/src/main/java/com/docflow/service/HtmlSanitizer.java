@@ -5,6 +5,7 @@ import org.jsoup.nodes.Document;
 import org.jsoup.safety.Safelist;
 import org.springframework.stereotype.Component;
 
+/** 服务端HTML白名单边界，导入、保存、快照和导出前均应经过此处净化。 */
 @Component
 public class HtmlSanitizer {
 

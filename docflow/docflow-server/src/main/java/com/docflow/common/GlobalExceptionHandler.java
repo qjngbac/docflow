@@ -10,6 +10,7 @@ import org.springframework.web.bind.annotation.RestControllerAdvice;
 import org.springframework.web.multipart.MaxUploadSizeExceededException;
 
 @Slf4j
+/** 将业务异常和可预期的框架异常转换为统一、可读且不泄露堆栈的 API 响应。 */
 @RestControllerAdvice
 public class GlobalExceptionHandler {
 

@@ -62,6 +62,7 @@ function handleDrop(event) { const file = event.dataTransfer.files?.[0]; if (fil
 function importFile(event) { const file = event.target.files?.[0]; event.target.value = ''; if (file) processFile(file) }
 function chooseCover(event){const file=event.target.files?.[0];event.target.value='';if(!file)return;if(!file.type.startsWith('image/'))return error('请选择图片文件');if(file.size>10*1024*1024)return error('封面图片不能超过 10 MB');if(coverPreview.value)URL.revokeObjectURL(coverPreview.value);coverFile.value=file;coverPreview.value=URL.createObjectURL(file)}
 async function processFile(file) {
+  // Word 文件交给后端解析和安全净化；纯文本格式可在浏览器读取后复用创建接口。
   const extension = file.name.split('.').pop()?.toLowerCase()
   if (!['md', 'markdown', 'txt', 'doc', 'docx'].includes(extension)) { error('仅支持 Markdown、TXT、DOC 或 DOCX 文件'); return }
   if (file.size > 10 * 1024 * 1024) { error('导入文件不能超过 10 MB'); return }

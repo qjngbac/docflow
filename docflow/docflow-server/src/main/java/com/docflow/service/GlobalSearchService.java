@@ -16,6 +16,7 @@ import org.springframework.util.StringUtils;
 
 import java.util.List;
 
+/** 在当前用户拥有或被授权的文档、文件夹和用户范围内执行全局搜索。 */
 @Service
 public class GlobalSearchService {
     private static final int RESULT_LIMIT = 8;

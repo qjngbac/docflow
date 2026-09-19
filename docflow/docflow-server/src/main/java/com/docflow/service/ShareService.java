@@ -16,6 +16,7 @@ import java.util.List;
 import java.util.Locale;
 import java.util.UUID;
 
+/** 校验公开分享令牌、密码和有效期，并返回经过签名URL重写的只读内容。 */
 @Service
 public class ShareService {
 

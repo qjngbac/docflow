@@ -59,7 +59,7 @@ CRDT_SERVER_NAME
 
 MySQL 仍然是主要的持久化存储，Redis 只负责多个节点之间的消息广播。
 
-Java 和 CRDT 服务必须配置相同的 `CRDT_ADMIN_SECRET`。管理端口默认是 `127.0.0.1:1235`，不应通过公网或反向代理暴露。文档所有者或拥有 `ADMIN` 权限的协作者可以在编辑器中查看 checkpoint 状态并触发压缩。
+Java 和 CRDT 服务必须配置相同的 `CRDT_ADMIN_SECRET`。管理端口默认是 `127.0.0.1:1235`，不应通过公网或反向代理暴露。文档所有者或拥有 `ADMIN` 权限的协作者可以在编辑器中查看 checkpoint 状态并触发压缩。Java 还通过该端口执行权限变化后的连接失效和 CRDT 版本正文替换；正文请求上限由 `CRDT_ADMIN_MAX_BODY_BYTES` 控制。
 
 ## 故障处理行为
 

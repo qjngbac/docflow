@@ -22,6 +22,7 @@ import java.util.Optional;
 import java.io.InputStream;
 import java.util.Arrays;
 
+/** 统一保存头像、正文图片和附件，并保证所有解析路径位于上传根目录内。 */
 @Service
 public class FileService {
 

@@ -33,6 +33,7 @@ import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 
+/** 提供用户治理、模板管理、审计查询和运行状态等后台能力。 */
 @Service
 public class AdminService {
     @Autowired private UserMapper userMapper;

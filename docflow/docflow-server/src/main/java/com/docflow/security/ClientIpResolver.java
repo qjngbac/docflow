@@ -8,6 +8,9 @@ import java.net.InetAddress;
 import java.util.Arrays;
 import java.util.List;
 
+/**
+ * 只在请求来自受信反向代理时采用转发头，防止客户端伪造 IP 绕过限流。
+ */
 @Component
 public class ClientIpResolver {
     private final List<NetworkRule> trustedProxies;

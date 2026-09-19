@@ -9,6 +9,7 @@ import org.springframework.stereotype.Component;
 import java.time.LocalDateTime;
 
 @Slf4j
+/** 按配置的保留天数定期永久清理回收站文档及其关联数据。 */
 @Component
 public class TrashCleanScheduler {
 

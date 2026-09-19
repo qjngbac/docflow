@@ -53,13 +53,14 @@
 </template>
 
 <script setup>
-import { reactive, ref } from 'vue'
-import { useRouter } from 'vue-router'
+import { onMounted, reactive, ref } from 'vue'
+import { useRoute, useRouter } from 'vue-router'
 import { Loader2, Lock, Mail, ShieldCheck, User, X } from 'lucide-vue-next'
 import { userApi } from '../api'
 import { useUserStore } from '../store'
-import { error, success } from '../utils/toast'
+import { error, success, warning } from '../utils/toast'
 
+const route = useRoute()
 const router = useRouter()
 const userStore = useUserStore()
 const mode = ref('login')
@@ -69,7 +70,13 @@ const form = reactive({ username: '', password: '', email: '', rememberMe: false
 const captcha = reactive({ required: false, image: '' })
 const reset = reactive({ email: '', code: '', newPassword: '', debugCode: '' })
 
+onMounted(() => {
+  // 令牌刷新被拒时接口层只跳转到本页并带上 reason，这里补一句解释，避免用户无提示地回到登录页。
+  if (route.query.reason === 'expired') warning('登录已过期，请重新登录')
+})
+
 async function handleSubmit() {
+  // 是否需要验证码由服务端失败计数决定，前端仅按 challenge 回传验证码 ID 和答案。
   loading.value = true
   try {
     const payload = { username: form.username, password: form.password, rememberMe: form.rememberMe,

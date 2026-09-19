@@ -6,6 +6,7 @@ import { gfm } from 'turndown-plugin-gfm'
 marked.setOptions({ gfm: true, breaks: true })
 
 function createTurndown() {
+  // HTML 无法完全无损还原为 Markdown；这里固定降级规则以保证结果可预测。
   const service = new TurndownService({
     headingStyle: 'atx',
     bulletListMarker: '-',
@@ -28,6 +29,7 @@ function createTurndown() {
 }
 
 export function sanitizeHtml(html) {
+  // 仅额外放行编辑器扩展所需属性，事件处理器和危险标签仍由 DOMPurify 移除。
   return DOMPurify.sanitize(html || '', {
     ADD_ATTR: ['target', 'rel', 'loading', 'decoding', 'data-type', 'data-latex', 'data-comment-id', 'data-change-id',
       'data-change-type', 'data-author-id', 'data-author-name', 'data-last-edit-by', 'data-last-edit-name',

@@ -16,6 +16,7 @@ import org.springframework.transaction.annotation.Transactional;
 import java.time.LocalDateTime;
 import java.util.List;
 
+/** 保存用户站内通知，维护未读状态并生成批注、提及和系统通知。 */
 @Service
 public class NotificationService {
     @Autowired private UserNotificationMapper notificationMapper;

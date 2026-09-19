@@ -25,6 +25,10 @@ import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 
 @Slf4j
+/**
+ * LEGACY协作模式的Redis草稿层；CRDT正文由独立协作服务负责。
+ * 修订号用于拒绝覆盖新草稿，持久化后再安全清理对应Redis状态。
+ */
 @Service
 public class CollaborationService {
 
@@ -56,8 +60,10 @@ public class CollaborationService {
     @Value("${collaboration.draft-ttl-hours:168}")
     private long draftTtlHours;
 
+    // 同一文档在单个Java实例内串行落库，避免定时任务和手动保存互相覆盖。
     private final Map<Long, Object> documentLocks = new ConcurrentHashMap<>();
 
+    /** 将一次LEGACY编辑暂存到Redis，并用客户端修订号检测并发冲突。 */
     public Document stageUpdate(Long docId, Long userId, String title,
                                 String content, Long expectedRevision) {
         Document persisted = permissionService.requireWritable(docId, userId);
@@ -128,6 +134,7 @@ public class CollaborationService {
     }
 
     @Transactional
+    /** 把最新Redis草稿原子写回MySQL；事务提交后才删除不再需要的草稿。 */
     public Document flushDocument(Long docId, boolean createVersion) {
         synchronized (lockFor(docId)) {
             String key = draftKey(docId);

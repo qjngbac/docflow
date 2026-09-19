@@ -21,6 +21,7 @@ import java.time.LocalDateTime;
 import java.util.List;
 import java.util.Locale;
 
+/** 接收用户问题反馈及截图，并提供用户查询与管理员处理流程。 */
 @Service
 public class FeedbackService {
     private static final List<String> TYPES = List.of("BUG", "UI", "SUGGESTION", "OTHER");

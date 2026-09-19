@@ -9,6 +9,7 @@ import { nextTick, onMounted, ref, watch } from 'vue'
 const props = defineProps({ modelValue: { type: String, default: '' }, mathml: { type: String, default: '' } })
 const emit = defineEmits(['update:modelValue', 'update:mathml'])
 const field = ref(null)
+// 区分外部赋值和用户输入，防止 LaTeX/MathML 双向同步互相触发。
 let applying = false
 
 function updateField(source = 'initial') {

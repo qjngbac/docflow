@@ -1,5 +1,6 @@
 import { Mark, mergeAttributes } from '@tiptap/core'
 
+// 批注内容保存在 Java 服务，Yjs 正文只保存批注 ID 对应的文字范围。
 export const CommentMark = Mark.create({
   name: 'comment',
   inclusive: false,

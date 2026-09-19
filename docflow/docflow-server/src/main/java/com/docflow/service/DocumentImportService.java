@@ -6,6 +6,7 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 import org.springframework.web.multipart.MultipartFile;
 
+/** 根据文件扩展名和MIME类型选择DOC或DOCX解析器，并统一返回富文本HTML。 */
 @Service
 public class DocumentImportService {
 

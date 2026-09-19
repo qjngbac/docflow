@@ -2,6 +2,7 @@ import { Extension, Mark, Node, mergeAttributes } from '@tiptap/core'
 import Image from '@tiptap/extension-image'
 import { BlockMath, InlineMath } from '@tiptap/extension-mathematics'
 
+// 这些无界面扩展只负责让服务端识别并保留前端的高级节点和属性。
 export const DocflowTextStyle = Mark.create({
   name: 'docflowTextStyle',
   addAttributes: () => ({

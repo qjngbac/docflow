@@ -46,6 +46,7 @@ import { useDocStore, useUserStore } from '../store'; import { docApi, fileApi, 
 import { confirmDialog } from '../utils/dialog'
 
 dayjs.extend(relativeTime); dayjs.locale('zh-cn')
+// 列表操作直接同步 Pinia 缓存，使创建、改名、移动和删除后无需刷新页面。
 const router = useRouter(); const docStore = useDocStore(); const userStore=useUserStore(); const createOpen = ref(false);const guideOpen=ref(false); const selectedIds = ref([]); const categoryFilter = ref(''); const moveDialog = reactive({ open: false, doc: null, folderId: 0, batch: false });const coverInput=ref(null),coverTarget=ref(null)
 const categories = computed(() => [...new Set(docStore.docs.map(doc => doc.category).filter(Boolean))].sort())
 const filteredDocs = computed(() => categoryFilter.value ? docStore.docs.filter(doc => doc.category === categoryFilter.value) : docStore.docs)

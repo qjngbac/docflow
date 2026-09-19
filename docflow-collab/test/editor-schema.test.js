@@ -1,6 +1,7 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { createInitialDocument, documentToHtml } from '../src/initial-document.js'
+import * as Y from 'yjs'
+import { createInitialDocument, documentToHtml, replaceDocumentContent } from '../src/initial-document.js'
 
 test('math and comment metadata survive CRDT materialization', () => {
   const document = createInitialDocument({
@@ -38,4 +39,20 @@ test('advanced formatting, numbered formulas, references and notes survive mater
   assert.match(html, /data-formula-kind="chem"/)
   assert.match(html, /data-footnote-text="note"/)
   assert.match(html, /data-citation-key="RFC"/)
+})
+
+test('version replacement keeps an old client convergent through a Yjs deletion update', () => {
+  const current = createInitialDocument({ initialContent: '<p>Current</p>', initialContentFormat: 'HTML' })
+  const oldClient = new Y.Doc()
+  Y.applyUpdate(oldClient, Y.encodeStateAsUpdate(current))
+  const replacement = createInitialDocument({ initialContent: '<p>Earlier</p>', initialContentFormat: 'HTML' })
+
+  replaceDocumentContent(current, replacement)
+  Y.applyUpdate(oldClient, Y.encodeStateAsUpdate(current, Y.encodeStateVector(oldClient)))
+
+  assert.match(documentToHtml(current), /Earlier/)
+  assert.equal(documentToHtml(oldClient), documentToHtml(current))
+  current.destroy()
+  oldClient.destroy()
+  replacement.destroy()
 })

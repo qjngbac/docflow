@@ -26,13 +26,14 @@ import java.util.List;
 import java.util.Map;
 import java.util.regex.Pattern;
 
+/** 管理文献元数据、DOI解析及文档内引用编号。 */
 @Service
 public class DocumentReferenceService {
     private static final Pattern CITE_KEY = Pattern.compile("[A-Za-z0-9][A-Za-z0-9_.:-]{0,99}");
     private final DocumentReferenceMapper referenceMapper;
     private final PermissionService permissionService;
     private final ObjectMapper objectMapper;
-    private final HttpClient httpClient = HttpClient.newBuilder().connectTimeout(Duration.ofSeconds(4)).build();
+    private volatile HttpClient httpClient;
 
     @Value("${app.references.crossref-url:https://api.crossref.org/works/}")
     private String crossrefUrl;
@@ -78,7 +79,7 @@ public class DocumentReferenceService {
                     .timeout(Duration.ofSeconds(8))
                     .header("Accept", "application/json")
                     .header("User-Agent", "DocFlow/1.0 (reference-import)").GET().build();
-            HttpResponse<String> response = httpClient.send(httpRequest, HttpResponse.BodyHandlers.ofString());
+            HttpResponse<String> response = httpClient().send(httpRequest, HttpResponse.BodyHandlers.ofString());
             if (response.statusCode() != 200) throw new BusinessException(ErrorCode.BAD_REQUEST, "DOI metadata is unavailable");
             JsonNode message = objectMapper.readTree(response.body()).path("message");
             if (!message.isObject()) throw new BusinessException(ErrorCode.BAD_REQUEST, "DOI metadata is invalid");
@@ -165,4 +166,19 @@ public class DocumentReferenceService {
 
     private String first(JsonNode node) { return node.isArray() && !node.isEmpty() ? node.get(0).asText("") : node.asText(""); }
     private void copyText(JsonNode source, Map<String, Object> target, String sourceKey, String targetKey) { String value = first(source.path(sourceKey)); if (!value.isBlank()) target.put(targetKey, value); }
+
+    /** DOI导入时才创建网络客户端，外部网络异常不会阻断后端启动。 */
+    private HttpClient httpClient() {
+        HttpClient client = httpClient;
+        if (client == null) {
+            synchronized (this) {
+                client = httpClient;
+                if (client == null) {
+                    client = HttpClient.newBuilder().connectTimeout(Duration.ofSeconds(4)).build();
+                    httpClient = client;
+                }
+            }
+        }
+        return client;
+    }
 }

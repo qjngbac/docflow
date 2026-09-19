@@ -26,6 +26,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.UUID;
 
+/** 管理验证码、Access/Refresh Token会话、设备记录和会话撤销。 */
 @Service
 public class AccountSecurityService {
     private static final SecureRandom RANDOM = new SecureRandom();
@@ -128,6 +129,9 @@ public class AccountSecurityService {
     }
 
     @Transactional
+    /**
+     * 轮换Refresh Token：旧令牌立即失效，新令牌沿用同一设备会话，避免令牌重放。
+     */
     public SessionIssue refreshSession(String refreshToken, String userAgent, String ipAddress) {
         if (refreshToken == null || refreshToken.isBlank()) {
             throw new BusinessException(ErrorCode.UNAUTHORIZED, "Refresh token is required");

@@ -5,6 +5,7 @@ import { TableRow } from '@tiptap/extension-table'
 import { Plugin, PluginKey } from '@tiptap/pm/state'
 import { Decoration, DecorationSet } from '@tiptap/pm/view'
 
+// 云笺专用的 Tiptap 扩展集中定义格式属性、公式、脚注、引用和可调表格行高。
 const styleAttributes = {
   fontFamily: { default: null, parseHTML: element => element.getAttribute('data-font-family'), renderHTML: attributes => attributes.fontFamily ? { 'data-font-family': attributes.fontFamily } : {} },
   fontSize: { default: null, parseHTML: element => element.getAttribute('data-font-size'), renderHTML: attributes => attributes.fontSize ? { 'data-font-size': attributes.fontSize } : {} },
@@ -52,6 +53,7 @@ export const BlockFormatting = Extension.create({
     }
   },
   addProseMirrorPlugins() {
+    // 折叠标题时仅用 Decoration 隐藏后续节点，不删除或改写协作正文。
     return [new Plugin({
       key: new PluginKey('docflowHeadingCollapse'),
       props: {
@@ -79,6 +81,7 @@ export const TabIndent = Extension.create({
   addKeyboardShortcuts() {
     return {
       Tab: () => {
+        // 表格内保留浏览器原本的单元格导航；正文中的 Tab 按四个全角空格插入。
         if (this.editor.isActive('table')) return false
         const indentation = this.editor.isActive('codeBlock') ? '    ' : '\u3000\u3000\u3000\u3000'
         return this.editor.commands.insertContent(indentation)

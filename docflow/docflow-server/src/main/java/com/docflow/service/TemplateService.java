@@ -11,6 +11,7 @@ import org.springframework.util.StringUtils;
 
 import java.util.List;
 
+/** 管理个人模板和管理员维护的系统模板。 */
 @Service
 public class TemplateService {
     @Autowired private DocumentTemplateMapper templateMapper;

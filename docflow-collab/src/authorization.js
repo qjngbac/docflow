@@ -1,3 +1,4 @@
+/** 每次连接或令牌同步都向 Java 服务确认用户、文档和读写权限。 */
 export async function authorize(documentName, token) {
   if (!/^\d+$/.test(documentName) || !token) throw new Error('Not authorized')
   const baseUrl = process.env.DOCFLOW_API_URL || 'http://127.0.0.1:8080'
@@ -14,6 +15,7 @@ export async function authorize(documentName, token) {
 }
 
 export async function updateMaterializedSnapshot(documentName, html, editorUserId) {
+  // 内部密钥只用于协作服务回写可搜索 HTML，不赋予普通客户端权限。
   const baseUrl = process.env.DOCFLOW_API_URL || 'http://127.0.0.1:8080'
   const adminSecret = process.env.CRDT_ADMIN_SECRET
   if (!adminSecret) throw new Error('CRDT admin secret is not configured')
