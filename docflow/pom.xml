@@ -19,7 +19,7 @@
         <java.version>17</java.version>
         <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
         <maven.compiler.release>${java.version}</maven.compiler.release>
-        <spring-boot.version>3.2.5</spring-boot.version>
+        <spring-boot.version>4.1.0</spring-boot.version>
         <mybatis-plus.version>3.5.6</mybatis-plus.version>
         <mysql.version>8.0.33</mysql.version>
         <druid.version>1.2.21</druid.version>
