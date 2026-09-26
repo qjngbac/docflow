@@ -27,7 +27,7 @@
         <hutool.version>5.8.25</hutool.version>
         <minio.version>8.5.9</minio.version>
         <poi.version>5.2.5</poi.version>
-        <jsoup.version>1.17.2</jsoup.version>
+        <jsoup.version>1.23.1</jsoup.version>
     </properties>
 
     <dependencyManagement>
