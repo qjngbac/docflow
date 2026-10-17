@@ -21,6 +21,11 @@ import static org.mockito.Mockito.when;
 
 @ExtendWith(MockitoExtension.class)
 class AdminNotificationServiceTest {
+    @org.junit.jupiter.api.BeforeAll
+    static void registerUserMetadata() {
+        com.baomidou.mybatisplus.core.metadata.TableInfoHelper.initTableInfo(
+                new org.apache.ibatis.builder.MapperBuilderAssistant(new com.baomidou.mybatisplus.core.MybatisConfiguration(), ""), User.class);
+    }
     @Mock private UserMapper userMapper;
     @Mock private NotificationService notificationService;
     @Mock private AdminService adminService;
@@ -34,8 +39,7 @@ class AdminNotificationServiceTest {
                 1L, "ALL", null, null, null, "系统将在今晚维护");
 
         assertThat(result.sentCount()).isEqualTo(2);
-        verify(notificationService).createAdminMessage(1L, 1L, "系统将在今晚维护");
-        verify(notificationService).createAdminMessage(2L, 1L, "系统将在今晚维护");
+        verify(notificationService).createAdminMessages(List.of(1L, 2L), 1L, "系统将在今晚维护");
         verify(adminService).audit(1L, "ADMIN_NOTIFICATION_SEND", "全部用户；接收人数：2");
     }
 
@@ -47,7 +51,7 @@ class AdminNotificationServiceTest {
                 1L, "USER", " target ", null, null, "请检查账号资料");
 
         assertThat(result.sentCount()).isEqualTo(1);
-        verify(notificationService).createAdminMessage(7L, 1L, "请检查账号资料");
+        verify(notificationService).createAdminMessages(List.of(7L), 1L, "请检查账号资料");
         verify(adminService).audit(1L, "ADMIN_NOTIFICATION_SEND", "用户 target；接收人数：1");
     }
 
@@ -61,7 +65,7 @@ class AdminNotificationServiceTest {
                 1L, "REGISTERED_AT", null, from, to, "欢迎使用云笺");
 
         assertThat(result.sentCount()).isEqualTo(1);
-        verify(notificationService).createAdminMessage(3L, 1L, "欢迎使用云笺");
+        verify(notificationService).createAdminMessages(List.of(3L), 1L, "欢迎使用云笺");
         verify(adminService).audit(1L, "ADMIN_NOTIFICATION_SEND", "注册时间 2026-08-01T00:00 至 2026-08-08T23:59；接收人数：1");
     }
 
@@ -73,7 +77,7 @@ class AdminNotificationServiceTest {
         assertThatThrownBy(() -> service.send(1L, "REGISTERED_AT", null, from, to, "测试提示"))
                 .isInstanceOf(BusinessException.class)
                 .hasMessageContaining("开始时间");
-        verify(notificationService, never()).createAdminMessage(any(), any(), any());
+        verify(notificationService, never()).createAdminMessages(any(), any(), any());
     }
 
     private User user(Long id, String username) {

@@ -2,7 +2,7 @@ import { defineConfig } from 'vite'
 import vue from '@vitejs/plugin-vue'
 
 export default defineConfig({
-  plugins: [vue({ template: { compilerOptions: { isCustomElement: tag => tag === 'math-field' } } })],
+  plugins: [vue({ template: { transformAssetUrls: process.env.VITEST ? { includeAbsolute: false } : undefined, compilerOptions: { isCustomElement: tag => tag === 'math-field' } } })],
   server: {
     port: 5173,
     proxy: {

@@ -18,30 +18,31 @@
 
 ## 运行方式
 
-1. 执行一次：
-
-```text
-docflow-server/src/main/resources/db/upgrade_20260712_crdt.sql
-```
-
-1. 本地开发时将 `.env.example` 复制为 `.env`，生产环境则配置同名外部环境变量。服务会自动读取 `.env`，外部环境变量优先；不要提交真实密码。
-2. 启动 MySQL、Redis 和 Java 后端。
-3. 安装并启动该服务：
+1. 按 [数据库迁移指南](../documents/18-生产部署备份监控与回滚指南.md#2-数据库迁移) 检查现有结构和 Flyway 历史，完成 V1～V5。已有数据库先备份并在副本上验证，不重复执行历史 `upgrade_*.sql` 或 `schema.sql`。
+2. 本地开发时仅在 `.env` 不存在时从 `.env.example` 复制，保留已有配置；生产环境配置同名外部环境变量。服务会自动读取 `.env`，外部环境变量优先；不要提交真实密码。
+3. 启动 MySQL、Redis 和同版本 Java 后端。
+4. 安装并启动该服务：
 
 ```bash
-npm install
+npm ci
 npm start
 ```
 
-服务会先验证 `crdt_checkpoint` 和 `crdt_update` 两张表可访问，再开放 WebSocket 端口。数据库密码错误或迁移未执行时会直接启动失败，不再伪装成客户端“无协作权限”。
+Hocuspocus 依赖锁定为 4.3.0。生产安装可用 `npm ci --omit=dev`，必须保留 `scripts/` 并执行 `postinstall` 的监听地址补丁；不能使用 `--ignore-scripts`。Java、Node 和前端须配套发布。
 
-1. 设置前端环境变量 `VITE_CRDT_URL`，例如：
+服务会先验证 `crdt_checkpoint`、`crdt_update`、`crdt_checkpoint_history` 三张已有协同表，再开放 WebSocket 端口。旧库缺少新增的 `crdt_materialization` 队列表时，会幂等创建这张空表，不重建或清空文档、checkpoint、增量及历史数据。已有队列表不会执行建表语句，因此正常重启不要求 `CREATE` 权限。
+
+首次补建需要数据库账号具有 `CREATE` 权限；没有权限时，应先由后端 Flyway V4 迁移创建该表。密码错误、已有协同表缺失或访问权限不足仍会明确报错，不会禁用持久化重试来绕过错误。
+
+自动补建队列表不等同于后端完成 V3–V5 升级：文件权限登记、文档 generation 列及历史引用回填仍由后端 Flyway 处理。后端默认可能未开启 Flyway，请按 [数据库迁移指南](../documents/18-生产部署备份监控与回滚指南.md#2-数据库迁移) 核对升级步骤；队列表的自动创建与后续 V4 迁移兼容。
+
+5. 设置前端环境变量 `VITE_CRDT_URL`，例如本地开发地址：
 
 ```text
 ws://127.0.0.1:1234
 ```
 
-然后重新启动 Vite 前端开发服务器。
+本地修改后重新启动 Vite 开发服务器。生产使用对应站点的 `wss://域名/collaboration/`，在构建前设置并重新生成前端产物。
 
 本地单节点开发时，可以通过以下配置关闭 Redis：
 

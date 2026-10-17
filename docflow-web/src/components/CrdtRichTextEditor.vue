@@ -61,7 +61,7 @@
 </template>
 
 <script setup>
-import { computed, onBeforeUnmount, reactive, ref } from 'vue'
+import { computed, onBeforeUnmount, reactive, ref, watch } from 'vue'
 import { EditorContent, useEditor } from '@tiptap/vue-3'
 import StarterKit from '@tiptap/starter-kit'
 import { TableKit } from '@tiptap/extension-table'
@@ -108,6 +108,9 @@ let reconnectAttempt = 0
 let reconnectProgress = 0
 let reconnectTimer = null
 let changeEmitTimer = null
+let sessionDisposed = false
+let sessionDisposal = null
+let reconnectCleanup = null
 let renumbering = false
 const seenCommentEvents = new Set()
 const specialCharacters = ['©', '®', '™', '±', '×', '÷', '∞', '≈', '≠', '≤', '≥', '°', '℃', '→', '←', '※', '§']
@@ -173,6 +176,10 @@ const provider = new HocuspocusProvider({
   token: () => getRealtimeAccessToken(),
   flushDelay: 80,
   onStatus: ({ status }) => handleProviderStatus(status),
+  onClose: () => queueMicrotask(() => {
+    // A document CLOSE frame leaves the socket connected; physical socket failures use its normal retry path.
+    if (!sessionDisposed && provider.configuration.websocketProvider.status === 'connected') emitReliability('session-closed')
+  }),
   onSynced: ({ state }) => { if (state !== false) { pendingChanges.value = 0; emitReliability('synced') } },
   onUnsyncedChanges: ({ number }) => { pendingChanges.value = number; emitReliability(provider.status || 'connected') },
   onAwarenessUpdate: ({ states }) => {
@@ -266,14 +273,27 @@ const editor = useEditor({
   onUpdate: ({ editor: instance }) => { renumberEquations(instance); clearTimeout(changeEmitTimer); changeEmitTimer = setTimeout(() => emit('change', instance.getHTML()), 180) }
 })
 
-onBeforeUnmount(async () => {
+watch([() => props.editable, editor], ([editable, instance]) => {
+  if (!sessionDisposed) instance?.setEditable(editable)
+}, { immediate: true, flush: 'sync' })
+
+function disposeSession() {
+  if (sessionDisposal) return sessionDisposal
+  sessionDisposed = true
+  reconnectCleanup?.()
+  reconnectCleanup = null
   editor.value?.destroy()
   clearInterval(reconnectTimer)
   clearTimeout(changeEmitTimer)
+  cancelAnimationFrame(anchorFrame)
   provider.destroy()
-  await localPersistence.destroy()
-  ydoc.destroy()
-})
+  sessionDisposal = (async () => {
+    await localPersistence.destroy()
+    ydoc.destroy()
+  })()
+  return sessionDisposal
+}
+onBeforeUnmount(disposeSession)
 
 function changePageFormat(format) {
   if (!['A4', 'LETTER'].includes(format) || format === props.pageSettings?.pageFormat) return
@@ -345,9 +365,11 @@ function savePageSettings() {
 }
 
 function emitReliability(status) {
+  if (sessionDisposed) return
   emit('status', { status, pending: pendingChanges.value, reconnectAttempt, reconnectProgress })
 }
 function handleProviderStatus(status) {
+  if (sessionDisposed) return
   if (status === 'connected') {
     reconnectAttempt = 0
     reconnectProgress = 100
@@ -608,10 +630,29 @@ let localIntentAt = 0
 function markLocalIntent() { localIntentAt = performance.now() }
 // 强制与协作服务重新建连并重新同步；用于"状态疑似不同步"时手动对齐（服务端才是权威状态）。
 function reconnect() {
+  if (sessionDisposed || reconnectCleanup) return
+  const websocket = provider.configuration.websocketProvider
+  const connect = () => {
+    if (sessionDisposed) return
+    try {
+      Promise.resolve(provider.connect()).catch(() => { if (!sessionDisposed) handleProviderStatus('disconnected') })
+    } catch { if (!sessionDisposed) handleProviderStatus('disconnected') }
+  }
+  if (websocket.status !== 'connected') { connect(); return }
+  const onDisconnect = () => {
+    reconnectCleanup?.()
+    reconnectCleanup = null
+    queueMicrotask(connect)
+  }
+  reconnectCleanup = () => websocket.off('disconnect', onDisconnect)
+  websocket.on('disconnect', onDisconnect)
   try {
     provider.disconnect()
-    setTimeout(() => { try { provider.connect() } catch { /* 组件已销毁 */ } }, 0)
-  } catch { /* 连接已销毁 */ }
+  } catch {
+    reconnectCleanup?.()
+    reconnectCleanup = null
+    handleProviderStatus('disconnected')
+  }
 }
 function scheduleAnchorCapture() {
   if (anchorFrame) return
@@ -640,7 +681,8 @@ function restoreViewportAnchor(position) {
 async function clearLocalState() {  // 失去写权限或访问权限时调用：本地 IndexedDB 里可能残留"服务端已拒绝写入"的分叉，
   // 若不清掉，下次打开会先看到这份本地内容，日后恢复写权限还可能被合并回服务端。
   // 索引库只是服务端状态的镜像，清掉不会丢服务端数据。
-  try { await localPersistence.clearData() } catch { /* 清理失败不影响当前会话 */ }
+  await disposeSession()
+  try { await localPersistence.clearData() } catch { /* 父组件会再次尝试删除本地库 */ }
 }
 function setContent(html) { if (!props.editable || !editor.value) return false; editor.value.commands.setContent(html || '<p></p>'); return true }
 function replaceText(query,replacement,replaceAll=false){if(!props.editable||!query||!editor.value)return 0;const root=document.createElement('div');root.innerHTML=editor.value.getHTML();const walker=document.createTreeWalker(root,NodeFilter.SHOW_TEXT);let node,count=0;while((node=walker.nextNode())){if(!node.nodeValue?.includes(query))continue;if(replaceAll){count+=node.nodeValue.split(query).length-1;node.nodeValue=node.nodeValue.split(query).join(replacement)}else{node.nodeValue=node.nodeValue.replace(query,replacement);count=1;break}}if(count)editor.value.commands.setContent(root.innerHTML);return count}

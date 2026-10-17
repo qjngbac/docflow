@@ -14,7 +14,7 @@ export async function authorize(documentName, token) {
   return body.data
 }
 
-export async function updateMaterializedSnapshot(documentName, html, editorUserId) {
+export async function updateMaterializedSnapshot(documentName, html, editorUserId, generation) {
   // 内部密钥只用于协作服务回写可搜索 HTML，不赋予普通客户端权限。
   const baseUrl = process.env.DOCFLOW_API_URL || 'http://127.0.0.1:8080'
   const adminSecret = process.env.CRDT_ADMIN_SECRET
@@ -22,7 +22,7 @@ export async function updateMaterializedSnapshot(documentName, html, editorUserI
   const response = await fetch(`${baseUrl}/api/v1/docs/${documentName}/crdt/snapshot`, {
     method: 'PUT',
     headers: { 'X-CRDT-Admin-Secret': adminSecret, 'Content-Type': 'application/json' },
-    body: JSON.stringify({ html, editorUserId }),
+    body: JSON.stringify({ html, editorUserId, generation }),
     signal: AbortSignal.timeout(Number(process.env.CRDT_AUTH_TIMEOUT_MS || 5000))
   })
   if (!response.ok) throw new Error('Materialized snapshot update failed')

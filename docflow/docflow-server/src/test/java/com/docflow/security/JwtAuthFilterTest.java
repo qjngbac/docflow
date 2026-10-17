@@ -60,4 +60,25 @@ class JwtAuthFilterTest {
         request.addHeader("Authorization", "Bearer token");
         return request;
     }
+
+    @Test
+    void fileCookieAuthenticatesOnlyReadOnlyFileRequests() throws Exception {
+        var realCookies = new AuthCookieService(false, true, "Lax", "ACCESS", "REFRESH", "CSRF");
+        ReflectionTestUtils.setField(filter, "authCookieService", realCookies);
+        when(jwtUtil.getTokenType("token")).thenReturn("access");
+        when(jwtUtil.getUserId("token")).thenReturn(3L);
+        when(jwtUtil.getUsername("token")).thenReturn("alice");
+        when(jwtUtil.getTokenId("token")).thenReturn("session-id");
+        when(sessions.validateAccessSession(3L, "session-id")).thenReturn(true);
+        for (String[] route : new String[][]{{"GET", "/files/a.png"}, {"HEAD", "/files/a.png"},
+                {"GET", "/api/v1/docs"}, {"POST", "/files/a.png"}}) {
+            var request = new MockHttpServletRequest(route[0], route[1]);
+            request.setCookies(new jakarta.servlet.http.Cookie("DOCFLOW_FILE_ACCESS", "token"));
+            var identity = new java.util.concurrent.atomic.AtomicReference<Long>();
+            filter.doFilter(request, new MockHttpServletResponse(), (req, res) ->
+                    identity.set(UserContext.get() == null ? null : UserContext.get().getUserId()));
+            org.assertj.core.api.Assertions.assertThat(identity.get())
+                    .isEqualTo(route[1].startsWith("/files/") && !route[0].equals("POST") ? 3L : null);
+        }
+    }
 }

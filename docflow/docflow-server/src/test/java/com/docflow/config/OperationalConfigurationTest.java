@@ -27,6 +27,7 @@ class OperationalConfigurationTest {
                 .contains("127.0.0.1"));
         assertEquals("health,info,prometheus",
                 local.get(0).getProperty("management.endpoints.web.exposure.include"));
+        assertTrue(String.valueOf(local.get(0).getProperty("app.verification.debug-code")).contains(":false}"));
     }
 
     @Test

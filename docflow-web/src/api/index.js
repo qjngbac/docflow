@@ -271,15 +271,16 @@ export const notificationApi = {
 }
 
 export const fileApi = {
-  upload(file) {
+  upload(file, docId = null) {
     const formData = new FormData()
     formData.append('file', file)
+    if (docId != null) formData.append('docId', String(docId))
     return api.post('/files/upload', formData, {
       headers: {}
     })
   },
-  uploadImage(file) {
-    return this.upload(file)
+  uploadImage(file, docId = null) {
+    return this.upload(file, docId)
   }
 }
 

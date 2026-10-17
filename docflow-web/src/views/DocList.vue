@@ -2,16 +2,17 @@
   <div class="doc-list-page">
     <input ref="coverInput" class="sr-only" type="file" accept="image/*" @change="replaceCover" />
     <section v-if="docStore.viewMode === 'documents' && !docStore.currentFolderId" class="workspace-banner"><img src="/imgs/hero-banner.jpg" alt="团队在线协作" /><div><h1>文档工作区</h1><p>集中整理知识，与团队保持同步</p></div></section>
-    <header class="page-header"><div><h2>{{ pageTitle }}</h2><span>{{ filteredDocs.length }} 篇文档</span></div><button v-if="docStore.viewMode !== 'trash'" class="btn btn-primary" type="button" @click="createOpen = true"><Plus :size="18" />新建文档</button></header>
+    <header class="page-header"><div><h2>{{ pageTitle }}</h2><span v-if="!docStore.loading && !docStore.loadError">{{ filteredDocs.length }} 篇文档</span></div><button v-if="docStore.viewMode !== 'trash'" class="btn btn-primary" type="button" @click="createOpen = true"><Plus :size="18" />新建文档</button></header>
     <p v-if="docStore.viewMode === 'trash'" class="trash-notice"><Trash2 :size="15" />回收站中的文档保留 {{ docStore.trashRetentionDays }} 天，到期后系统会自动彻底删除。</p>
 
-    <div v-if="docStore.docs.length" class="list-tools">
+    <div v-if="!docStore.loading && !docStore.loadError && docStore.docs.length" class="list-tools">
       <label class="select-all"><input type="checkbox" :checked="allSelected" @change="toggleAll" />全选</label>
       <select v-model="categoryFilter" class="input category-filter"><option value="">全部分类</option><option v-for="category in categories" :key="category">{{ category }}</option></select>
       <div v-if="selectedIds.length" class="batch-actions"><span>已选 {{ selectedIds.length }} 项</span><button v-if="docStore.viewMode !== 'trash'" class="btn btn-secondary btn-sm" type="button" @click="openBatchMove"><FolderInput :size="14" />移动</button><button v-if="docStore.viewMode !== 'trash'" class="btn btn-secondary btn-sm" type="button" @click="runBatch('trash')"><Trash2 :size="14" />删除</button><button v-else class="btn btn-secondary btn-sm" type="button" @click="runBatch('restore')"><RotateCcw :size="14" />恢复</button><button v-if="docStore.viewMode === 'trash'" class="btn btn-secondary btn-sm danger-text" type="button" @click="runBatch('purge')"><Trash2 :size="14" />彻底删除</button></div>
     </div>
 
     <div v-if="docStore.loading" class="state"><Loader2 :size="30" class="spin" /><p>正在加载文档</p></div>
+    <div v-else-if="docStore.loadError" class="state" role="alert"><h3>文档加载失败</h3><p>{{ docStore.loadError }}</p><button class="btn btn-primary" type="button" @click="retryLoad">重新加载</button></div>
     <div v-else-if="filteredDocs.length||showGuide" class="doc-grid">
       <article v-if="showGuide" class="doc-card guide-card" @click="guideOpen=true"><div class="guide-cover"><BookOpen :size="28"/></div><div class="doc-card-body"><div class="doc-card-header"><div class="doc-title"><BookOpen :size="18"/><span>云笺协作指南</span></div><button class="btn btn-icon btn-ghost" type="button" title="不再显示" @click.stop="dismissGuide"><X :size="15"/></button></div><div class="doc-meta"><span>内置指南</span><small>只读</small></div><p class="doc-summary">邀请伙伴共同编辑，使用批注、修订和版本历史完成团队审阅。</p><footer><span>重要功能</span><span>协作入门</span></footer></div></article>
       <article v-for="doc in filteredDocs" :key="doc.id" :class="['doc-card', { selected: selectedIds.includes(doc.id) }]" @click="openDoc(doc)">
@@ -59,6 +60,7 @@ function trashRemaining(doc) { const deletedAt = dayjs(doc.deletedAt || doc.upda
 function toggleDoc(id) { selectedIds.value = selectedIds.value.includes(id) ? selectedIds.value.filter(item => item !== id) : [...selectedIds.value, id] }
 function toggleAll() { const ids = filteredDocs.value.map(doc => doc.id); selectedIds.value = allSelected.value ? selectedIds.value.filter(id => !ids.includes(id)) : [...new Set([...selectedIds.value, ...ids])] }
 async function run(action, text, fallback) { try { await action(); success(text) } catch (exception) { error(exception.message || fallback) } }
+async function retryLoad() { try { await docStore.retryLoad() } catch (exception) { error(exception.message || '文档加载失败') } }
 function handlePin(doc) { run(() => docStore.togglePin(doc), doc.isPinned ? '已取消置顶' : '已置顶', '置顶失败') }
 function handleFavorite(doc) { run(() => docStore.toggleFavorite(doc), doc.isFavorite ? '已取消收藏' : '已收藏', '收藏失败') }
 function handleCopy(doc) { run(() => docStore.copyDoc(doc), '文档已复制', '复制失败') }

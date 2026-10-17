@@ -19,6 +19,7 @@ public class AttachmentService {
     @Autowired private FileAttachmentMapper attachmentMapper;
     @Autowired private PermissionService permissionService;
     @Autowired private FileService fileService;
+    @Autowired private FileAccessService fileAccessService;
 
     public List<FileAttachment> list(Long docId, Long userId) {
         permissionService.requireReadable(docId, userId);
@@ -39,6 +40,7 @@ public class AttachmentService {
         attachment.setFileSize(file.getSize());
         attachment.setMimeType(file.getContentType());
         attachmentMapper.insert(attachment);
+        fileAccessService.associateDocumentReferences(docId, null, url, userId);
         return attachment;
     }
 
@@ -50,13 +52,13 @@ public class AttachmentService {
             throw new BusinessException(ErrorCode.NOT_FOUND, "Attachment not found");
         }
         attachmentMapper.deleteById(attachmentId);
-        fileService.deleteByUrl(attachment.getFileUrl());
+        fileService.deleteAfterCommit(attachment.getFileUrl());
     }
 
     public void deleteByDocument(Long docId) {
         List<FileAttachment> attachments = attachmentMapper.selectList(
                 new LambdaQueryWrapper<FileAttachment>().eq(FileAttachment::getDocId, docId));
-        attachments.forEach(item -> fileService.deleteByUrl(item.getFileUrl()));
+        attachments.forEach(item -> fileService.deleteAfterCommit(item.getFileUrl()));
         attachmentMapper.delete(new LambdaQueryWrapper<FileAttachment>().eq(FileAttachment::getDocId, docId));
     }
 }

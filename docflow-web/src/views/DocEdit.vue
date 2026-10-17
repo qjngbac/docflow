@@ -25,7 +25,7 @@
 
     <div class="editor-body">
       <div class="editor-container" @dragover.prevent @drop.capture="handleEditorDrop" @paste.capture="handleEditorPaste">
-        <CrdtRichTextEditor v-if="isCrdt&&crdtAccess" :key="docId" ref="crdtEditor" :doc-id="docId" :user="crdtUser" :editable="crdtAccess.writable" :commentable="crdtAccess.commentable" :comments-open="activePanel==='comments'" :page-settings="pageSettings" @status="handleCrdtStatus" @users="onlineUsers=$event" @change="handleCrdtChange" @upload-images="handleUploadImages" @add-comment="openCommentDialog" @comment-click="openCommentThread" @comment-event="handleCommentEvent" @page-format-change="changePageFormat" @page-settings-change="savePageSettings"/>
+        <CrdtRichTextEditor v-if="isCrdt&&crdtAccess" :key="`${docId}:${crdtEditorGeneration}`" ref="crdtEditor" :doc-id="docId" :user="crdtUser" :editable="crdtAccess.writable" :commentable="crdtAccess.commentable" :comments-open="activePanel==='comments'" :page-settings="pageSettings" @status="handleCrdtStatus" @users="onlineUsers=$event" @change="handleCrdtChange" @upload-images="handleUploadImages" @add-comment="openCommentDialog" @comment-click="openCommentThread" @comment-event="handleCommentEvent" @page-format-change="changePageFormat" @page-settings-change="savePageSettings"/>
         <MdEditor v-else-if="contentFormat==='MARKDOWN'" v-model="content" language="zh-CN" theme="light" :preview="markdownView!=='edit'" :previewOnly="markdownView==='preview'" :htmlPreview="false" :toolbarsExclude="['github']" style="height:100%" @onChange="handleContentChange" @onSave="handleSave" @onUploadImg="handleUploadImages"/>
         <RichTextEditor v-else v-model="content" @change="handleContentChange" @upload-images="handleUploadImages"/>
       </div>
@@ -54,7 +54,7 @@
 
 <script setup>
 import { computed, defineAsyncComponent, nextTick, onMounted, onUnmounted, reactive, ref, watch } from 'vue'
-import { onBeforeRouteLeave, useRoute, useRouter } from 'vue-router'
+import { onBeforeRouteLeave, onBeforeRouteUpdate, useRoute, useRouter } from 'vue-router'
 import { MdEditor, MdPreview } from 'md-editor-v3'; import 'md-editor-v3/lib/style.css'
 import { htmlToMarkdown, markdownToHtml, sanitizeHtml } from '../utils/contentConversion'
 import { AlertTriangle, ArrowLeft, Copy, DatabaseBackup, Download, Eye, FilePenLine, History, Info, Link, ListTree, Loader2, MessageSquareText, MessageSquareWarning, PanelsTopLeft, Paperclip, Printer, RefreshCw, Save, Search, Share2, Trash2, Upload, UserPlus, Users, X } from 'lucide-vue-next'
@@ -93,117 +93,234 @@ const commentThreads=computed(()=>comments.value.filter(item=>!item.parentId&&(
   })))
 // applyingRemote 防止远端内容写入界面时再次触发本地自动保存形成回环。
 let socket,changeTimer,applyingRemote=false,editorReady=false,panelResizeHandler,panelResizeEndHandler
+let documentGeneration=0,disposed=false,pendingSocketUpdate=null,saveInFlight=null
+const crdtEditorGeneration=ref(0)
+const documentContext=()=>({id:docId.value,generation:documentGeneration})
+const isCurrentDocument=context=>!disposed&&context.id===docId.value&&context.generation===documentGeneration
 
 onMounted(async()=>{window.addEventListener('keydown',handleShortcut);window.addEventListener('beforeunload',handleBeforeUnload);if(await loadDoc()&&!isCrdt.value)connectWebSocket()})
-onUnmounted(()=>{clearTimeout(changeTimer);socket?.disconnect();stopPanelResize();window.removeEventListener('keydown',handleShortcut);window.removeEventListener('beforeunload',handleBeforeUnload)})
-onBeforeRouteLeave(async()=>!hasUnsaved.value||await confirmDialog('文档还有未保存的修改，离开后可能会丢失。', { title: '离开当前文档', confirmText: '仍然离开', danger: true }))
+onUnmounted(()=>{disposed=true;documentGeneration++;clearTimeout(changeTimer);socket?.disconnect();stopPanelResize();window.removeEventListener('keydown',handleShortcut);window.removeEventListener('beforeunload',handleBeforeUnload)})
+const confirmLeaveDocument=async()=>!hasUnsaved.value||await confirmDialog('文档还有未保存的修改，离开后可能会丢失。', { title: '离开当前文档', confirmText: '仍然离开', danger: true })
+onBeforeRouteLeave(confirmLeaveDocument)
+onBeforeRouteUpdate((to,from)=>to.params.id===from.params.id||confirmLeaveDocument())
 watch(()=>route.params.id,async()=>{clearTimeout(changeTimer);socket?.disconnect();activePanel.value='';if(await loadDoc()&&!isCrdt.value)connectWebSocket()})
 watch(activePanel,value=>{if(value==='versions')loadVersions();if(value==='comments')loadComments();if(value==='people')loadCollaborators();if(value==='attachments')loadAttachments();if(value==='checkpoint')loadCheckpoint();if(value==='settings')loadTags()})
 
-async function loadDoc(){editorReady=false;crdtAccess.value=null;connected.value=false;crdtConnectedOnce=false;try{const response=await docApi.detail(docId.value);applyDocument(response.data);if(isCrdt.value){const access=await crdtApi.access(docId.value);const writable=Boolean(access.data?.writable);if(!writable&&hadWriteAccess()){await deleteLocalCrdtCopy(docId.value);warning('你已被改为只读，此前未同步的本地修改已丢弃')}crdtAccess.value=access.data;markWritable(writable);contentFormat.value='HTML';saveStatus.value='连接中'}else{const draft=readDraft();if(draft&&draft.content!==content.value&&await confirmDialog('检测到一份未上传的本地草稿，是否恢复？',{title:'恢复本地草稿',confirmText:'恢复草稿'})){docTitle.value=draft.title;content.value=draft.content;contentFormat.value=draft.format||'MARKDOWN';saveStatus.value='已恢复草稿'}}await nextTick();editorReady=true;return true}catch(exception){if(exception?.code===403||exception?.code===404)await refreshWorkspace();error(exception.message||'文档加载失败');router.push('/');return false}}
+async function loadDoc(){
+  documentGeneration++;const context=documentContext()
+  editorReady=false;crdtAccess.value=null;connected.value=false;crdtConnectedOnce=false;lastCrdtConnected=false;lastCrdtStatus=''
+  pendingSocketUpdate=null;saveInFlight=null;conflict.active=false;onlineUsers.value=[]
+  versions.value=[];comments.value=[];collaborators.value=[];attachments.value=[];checkpointHistory.value=[];compareSelection.value=[];selectedCommentIds.value=[];panelLoading.value=false
+  preview.open=false;comparison.open=false;commentDialog.open=false;activeCommentId.value=null;shareLink.value=''
+  syncing.value=false;Object.assign(deleteCommentDialog,{open:false,item:null,busy:false});Object.keys(checkpointInfo).forEach(key=>delete checkpointInfo[key])
+  try{
+    const response=await docApi.detail(context.id);if(!isCurrentDocument(context))return false
+    applyDocument(response.data)
+    if(isCrdt.value){
+      const access=await crdtApi.access(context.id);if(!isCurrentDocument(context))return false
+      const writable=Boolean(access.data?.writable)
+      if(!writable&&hadWriteAccess(context.id)){await deleteLocalCrdtCopy(context.id);if(!isCurrentDocument(context))return false;warning('你已被改为只读，此前未同步的本地修改已丢弃')}
+      crdtAccess.value=access.data;markWritable(writable,context.id);contentFormat.value='HTML';saveStatus.value='连接中'
+    }else{
+      const draft=readDraft()
+      if(draft&&draft.content!==content.value){
+        const restore=await confirmDialog('检测到一份未上传的本地草稿，是否恢复？',{title:'恢复本地草稿',confirmText:'恢复草稿'})
+        if(!isCurrentDocument(context))return false
+        if(restore){docTitle.value=draft.title;content.value=draft.content;contentFormat.value=draft.format||'MARKDOWN';saveStatus.value='已恢复草稿'}
+      }
+    }
+    await nextTick();if(!isCurrentDocument(context))return false
+    editorReady=true;return true
+  }catch(exception){if(!isCurrentDocument(context))return false;if(exception?.code===403||exception?.code===404)await refreshWorkspace();if(!isCurrentDocument(context))return false;error(exception.message||'文档加载失败');router.push('/');return false}
+}
 function applyDocument(document){applyingRemote=true;docData.value=document;docTitle.value=document.title||'';contentFormat.value=document.contentFormat||'MARKDOWN';content.value=contentFormat.value==='HTML'?sanitizeHtml(document.content||''):document.content||'';revision.value=document.revision||0;acceptedTitle.value=docTitle.value;acceptedContent.value=content.value;acceptedFormat.value=contentFormat.value;metadata.category=document.category||'';Object.assign(pageSettings,{pageFormat:document.pageFormat||'A4',marginTop:document.marginTop??20,marginRight:document.marginRight??20,marginBottom:document.marginBottom??20,marginLeft:document.marginLeft??20,pageHeader:document.pageHeader||'',pageFooter:document.pageFooter||''});nextTick(()=>applyingRemote=false)}
-async function connectWebSocket(){if(isCrdt.value)return;const token=await getRealtimeAccessToken();socket=new CollabWebSocket(docId.value,token);socket.on('connected',()=>{connected.value=true;saveStatus.value='已连接'});socket.on('disconnected',()=>{connected.value=false;saveStatus.value='离线'});socket.on('onlineUsers',message=>onlineUsers.value=message.data?.users||[]);socket.on('documentUpdate',message=>{applyingRemote=true;if(message.data?.title!==undefined)docTitle.value=message.data.title;if(message.data?.content!==undefined)content.value=message.data.content;revision.value=message.data?.revision??revision.value;acceptedTitle.value=docTitle.value;acceptedContent.value=content.value;saveStatus.value='已同步';clearDraft();nextTick(()=>applyingRemote=false)});socket.on('revisionConflict',prepareConflict);socket.connect()}
+async function connectWebSocket(){
+  if(isCrdt.value)return;const context=documentContext(),token=await getRealtimeAccessToken();if(!isCurrentDocument(context))return
+  const connection=new CollabWebSocket(context.id,token);socket=connection
+  const on=(event,handler)=>connection.on(event,message=>{if(isCurrentDocument(context)&&socket===connection)handler(message)})
+  on('connected',()=>{connected.value=true;saveStatus.value='已连接'});on('disconnected',()=>{connected.value=false;saveStatus.value='离线'})
+  on('onlineUsers',message=>onlineUsers.value=message.data?.users||[])
+  on('documentUpdate',message=>{
+    const remote=message.data||{};if(remote.revision!=null&&remote.revision<=revision.value)return
+    const sent=pendingSocketUpdate
+    if(sent&&remote.content===sent.content){
+      acceptSavedDocument(remote,sent);pendingSocketUpdate=null
+    }else if(hasUnsaved.value){
+      Object.assign(conflict,{active:true,localContent:content.value,localTitle:docTitle.value,remote:{...docData.value,...remote}});warning('文档已更新，请选择冲突处理方式')
+    }else{applyDocument({...docData.value,...remote});saveStatus.value='已同步';clearDraft()}
+  })
+  on('revisionConflict',prepareConflict);connection.connect()
+}
 function markLocalDraft(){if(!editorReady||applyingRemote||isCrdt.value)return;localStorage.setItem(draftKey(),JSON.stringify({title:docTitle.value,content:content.value,format:contentFormat.value,revision:revision.value,time:Date.now()}))}
-function handleContentChange(){if(isCrdt.value||!editorReady||applyingRemote||conflict.active)return;markLocalDraft();saveStatus.value='待同步';clearTimeout(changeTimer);changeTimer=setTimeout(async()=>{if(connected.value&&socket?.sendDocumentUpdate(content.value,revision.value))saveStatus.value='同步中';else await handleSave()},650)}
+function handleContentChange(){if(isCrdt.value||!editorReady||applyingRemote||conflict.active)return;markLocalDraft();saveStatus.value='待同步';clearTimeout(changeTimer);changeTimer=setTimeout(async()=>{const sent={title:acceptedTitle.value,content:content.value,contentFormat:contentFormat.value};if(connected.value&&socket?.sendDocumentUpdate(sent.content,revision.value)){pendingSocketUpdate=sent;saveStatus.value='同步中'}else await handleSave()},650)}
 // CRDT 正文由协作服务持久化；普通保存接口只更新标题等元数据。
 function handleCrdtChange(html){content.value=sanitizeHtml(html)}
 const WRITABLE_MARK='docflow:crdt-writable:'
-let crdtConnectedOnce=false
-function markWritable(writable){try{localStorage.setItem(WRITABLE_MARK+docId.value,writable?'1':'0')}catch{/* 存储不可用时忽略 */}}
-function hadWriteAccess(){try{return localStorage.getItem(WRITABLE_MARK+docId.value)==='1'}catch{return false}}
+let crdtConnectedOnce=false,lastCrdtConnected=false,lastCrdtStatus=''
+function markWritable(writable,id=docId.value){try{localStorage.setItem(WRITABLE_MARK+id,writable?'1':'0')}catch{/* 存储不可用时忽略 */}}
+function hadWriteAccess(id=docId.value){try{return localStorage.getItem(WRITABLE_MARK+id)==='1'}catch{return false}}
 async function refreshWorkspace(){try{await Promise.all([docStore.loadFolders(),docStore.loadDocs()])}catch{/* 列表刷新失败不阻塞主流程 */}}
 // 权限被降级或移除时，本地 IndexedDB 里可能残留"服务端已拒绝写入"的编辑；
 // 不清掉的话，用户下次打开会先看到这份本地内容，日后恢复写权限还可能被合并回服务端。
-async function dropLocalCrdtCopy(message){await crdtEditor.value?.clearLocalState?.();await deleteLocalCrdtCopy(docId.value);markWritable(false);if(message)warning(message)}
+async function dropLocalCrdtCopy(message,context=documentContext()){
+  const instance=crdtEditor.value
+  await instance?.clearLocalState?.();await deleteLocalCrdtCopy(context.id);markWritable(false,context.id)
+  if(!isCurrentDocument(context))return
+  crdtEditorGeneration.value++;if(message)warning(message)
+}
 // 重连意味着连接曾被服务端断开（权限变更、文档被删除等），必须重新确认一次权限。
-async function refreshCrdtAccess(){if(!isCrdt.value)return;try{const response=await crdtApi.access(docId.value);const wasWritable=Boolean(crdtAccess.value?.writable);const writable=Boolean(response.data?.writable);crdtAccess.value=response.data;markWritable(writable);if(wasWritable&&!writable)await dropLocalCrdtCopy('你已被改为只读，此前未同步的本地修改已丢弃；刷新页面可看到最新内容')}catch(exception){
+async function refreshCrdtAccess(){if(!isCrdt.value)return false;const context=documentContext();try{const response=await crdtApi.access(context.id);if(!isCurrentDocument(context))return false;const wasWritable=Boolean(crdtAccess.value?.writable);const writable=Boolean(response.data?.writable);crdtAccess.value=response.data;markWritable(writable,context.id);if(wasWritable&&!writable)await dropLocalCrdtCopy('你已被改为只读，此前未同步的本地修改已丢弃',context);return isCurrentDocument(context)}catch(exception){
   // 只有服务端明确判定无权访问（403/404）才清理并离开；网络抖动、超时不做处理，避免误踢用户。
-  if(exception?.code!==403&&exception?.code!==404)return
-  await dropLocalCrdtCopy()
+  if(!isCurrentDocument(context)||(exception?.code!==403&&exception?.code!==404))return false
+  await dropLocalCrdtCopy(undefined,context)
+  if(!isCurrentDocument(context))return false
   crdtAccess.value=null
   error(exception.code===404?'文档不存在或已被删除':'你已失去此文档的访问权限')
   await refreshWorkspace()
-  await router.push('/')}}
+  if(!isCurrentDocument(context))return false
+  await router.push('/');return false}}
+let closedCrdtCheck=null
+const automaticallyRecoveredEditors=new WeakSet()
+async function recoverClosedCrdtSession(){
+  const context=documentContext(),instance=crdtEditor.value
+  if(!isCrdt.value||!instance||closedCrdtCheck?.instance===instance)return
+  const check={instance};closedCrdtCheck=check
+  try{
+    const allowed=await refreshCrdtAccess();await nextTick()
+    if(!allowed||!isCurrentDocument(context)||instance!==crdtEditor.value||automaticallyRecoveredEditors.has(instance))return
+    // One automatic recovery per mounted editor; further failures remain available for explicit resync.
+    automaticallyRecoveredEditors.add(instance);instance.reconnect?.()
+  }finally{if(closedCrdtCheck===check)closedCrdtCheck=null}
+}
 const syncing=ref(false)
 // 手动重新同步：重新确认权限 → 重连协作连接（服务端才是权威状态）→ 刷新批注/协作者/恢复点面板。
 // 权限刚被改动、或怀疑某一端状态不同步时，点一下比退出重进更快。
-async function resyncDocument(){if(syncing.value)return;syncing.value=true;try{await refreshCrdtAccess();if(!isCrdt.value||!crdtAccess.value)return;crdtEditor.value?.reconnect?.();await Promise.all([loadComments().catch(()=>{}),loadCollaborators().catch(()=>{})]);if(activePanel.value==='checkpoint')await loadCheckpoint();success('已重新同步')}catch(exception){error(exception.message||'重新同步失败')}finally{syncing.value=false}}
-function handleCrdtStatus(event){const status=typeof event==='string'?event:event.status;Object.assign(crdtReliability,typeof event==='object'?event:{});connected.value=status==='connected'||status==='synced';saveStatus.value=status==='synced'?(crdtReliability.pending?`待同步 ${crdtReliability.pending}`:'已同步'):status==='connected'?(crdtReliability.pending?`待同步 ${crdtReliability.pending}`:'同步中'):status==='unauthorized'?'无协作权限':status==='disconnected'?'离线':'重连中';if(status==='connected'||status==='synced'){if(crdtConnectedOnce)refreshCrdtAccess();else crdtConnectedOnce=true}}
-async function handleSave(){clearTimeout(changeTimer);if(!editorReady||(!isCrdt.value&&conflict.active))return false;if(!hasUnsaved.value){saveStatus.value=isCrdt.value?(connected.value?'已同步':'离线保存'):'已保存';clearDraft();return true}saveStatus.value='保存中';try{const payload=isCrdt.value?{title:docTitle.value}:{title:docTitle.value,content:content.value,contentFormat:contentFormat.value,revision:revision.value};const response=await docApi.update(docId.value,payload);docTitle.value=response.data.title;acceptedTitle.value=docTitle.value;docStore.rememberUpdatedDoc(response.data);if(!isCrdt.value)applyDocument(response.data);saveStatus.value=isCrdt.value?'已同步':'已保存';clearDraft();return true}catch(exception){if(!isCrdt.value&&exception.code===409)await prepareConflict();else{error(exception.message||'保存失败');saveStatus.value='保存失败'}return false}}
-const saveTitleIfChanged=()=>docTitle.value!==acceptedTitle.value?handleSave():null; async function prepareConflict(){try{const localContent=content.value,localTitle=docTitle.value;const response=await docApi.detail(docId.value);Object.assign(conflict,{active:true,localContent,localTitle,remote:response.data});warning('文档已更新，请选择冲突处理方式')}catch{error('无法获取最新文档')}}
+async function resyncDocument(){if(syncing.value)return;const context=documentContext();syncing.value=true;try{if(!await refreshCrdtAccess()||!isCurrentDocument(context)||!isCrdt.value||!crdtAccess.value)return;crdtEditor.value?.reconnect?.();await Promise.all([loadComments().catch(()=>{}),loadCollaborators().catch(()=>{})]);if(!isCurrentDocument(context))return;if(activePanel.value==='checkpoint')await loadCheckpoint();if(isCurrentDocument(context))success('已重新同步')}catch(exception){if(isCurrentDocument(context))error(exception.message||'重新同步失败')}finally{if(isCurrentDocument(context))syncing.value=false}}
+function handleCrdtStatus(event){const status=typeof event==='string'?event:event.status;Object.assign(crdtReliability,typeof event==='object'?event:{});connected.value=status==='connected'||status==='synced';saveStatus.value=status==='synced'?(crdtReliability.pending?`待同步 ${crdtReliability.pending}`:'已同步'):status==='connected'?(crdtReliability.pending?`待同步 ${crdtReliability.pending}`:'同步中'):status==='unauthorized'?'无协作权限':['disconnected','session-closed'].includes(status)?'离线':'重连中';if(status==='session-closed')recoverClosedCrdtSession();else if(connected.value&&!lastCrdtConnected){if(crdtConnectedOnce)refreshCrdtAccess();else crdtConnectedOnce=true}else if(status==='unauthorized'&&lastCrdtStatus!=='unauthorized')refreshCrdtAccess();lastCrdtConnected=connected.value;lastCrdtStatus=status}
+function acceptSavedDocument(document,sent){
+  applyingRemote=true
+  if(document.title!==undefined){if(docTitle.value===sent.title)docTitle.value=document.title;acceptedTitle.value=document.title}
+  if(!isCrdt.value){
+    const format=document.contentFormat||sent.contentFormat
+    if(document.content!==undefined){const saved=format==='HTML'?sanitizeHtml(document.content):document.content;if(content.value===sent.content)content.value=saved;acceptedContent.value=saved}
+    if(contentFormat.value===sent.contentFormat)contentFormat.value=format
+    acceptedFormat.value=format;revision.value=document.revision??revision.value
+  }
+  docData.value={...docData.value,...document}
+  saveStatus.value=hasUnsaved.value?'待同步':isCrdt.value?'已同步':'已保存'
+  if(hasUnsaved.value){nextTick(()=>{applyingRemote=false;markLocalDraft()})}else{clearDraft();nextTick(()=>applyingRemote=false)}
+}
+async function handleSave(){
+  clearTimeout(changeTimer);if(!editorReady||(!isCrdt.value&&conflict.active))return false
+  const context=documentContext()
+  if(saveInFlight){await saveInFlight;if(!isCurrentDocument(context))return false;return hasUnsaved.value?handleSave():true}
+  if(!hasUnsaved.value){saveStatus.value=isCrdt.value?(connected.value?'已同步':'离线保存'):'已保存';clearDraft();return true}
+  const sent={title:docTitle.value,content:content.value,contentFormat:contentFormat.value,revision:revision.value},crdt=isCrdt.value
+  saveStatus.value='保存中'
+  const saving=(async()=>{try{
+    const response=await docApi.update(context.id,crdt?{title:sent.title}:sent)
+    if(!isCurrentDocument(context))return false
+    acceptSavedDocument(response.data,sent);docStore.rememberUpdatedDoc(response.data);return !hasUnsaved.value
+  }catch(exception){if(!isCurrentDocument(context))return false;if(!crdt&&exception.code===409)await prepareConflict();else{error(exception.message||'保存失败');saveStatus.value='保存失败'}return false}})()
+  saveInFlight=saving
+  try{return await saving}finally{if(saveInFlight===saving)saveInFlight=null}
+}
+const saveTitleIfChanged=()=>docTitle.value!==acceptedTitle.value?handleSave():null; async function prepareConflict(){const context=documentContext();try{const response=await docApi.detail(context.id);if(!isCurrentDocument(context))return;Object.assign(conflict,{active:true,localContent:content.value,localTitle:docTitle.value,remote:response.data});warning('文档已更新，请选择冲突处理方式')}catch{if(isCurrentDocument(context))error('无法获取最新文档')}}
 function useRemoteVersion(){applyDocument(conflict.remote);conflict.active=false;clearDraft()} async function retryLocalVersion(){revision.value=conflict.remote.revision;content.value=conflict.localContent;docTitle.value=conflict.localTitle;conflict.active=false;await handleSave()}
-async function switchFormat(format){if(isCrdt.value||format===contentFormat.value)return;const target=format==='HTML'?'富文本':'Markdown';if(!(await confirmDialog(`将当前内容转换为 ${target} 格式？复杂样式可能会有简化。`,{title:'切换编辑格式',confirmText:'转换'})))return;content.value=format==='HTML'?markdownToHtml(content.value):htmlToMarkdown(content.value);contentFormat.value=format;markLocalDraft();await handleSave()}
+async function switchFormat(format){if(isCrdt.value||format===contentFormat.value)return;const context=documentContext(),original=content.value,target=format==='HTML'?'富文本':'Markdown';if(!(await confirmDialog(`将当前内容转换为 ${target} 格式？复杂样式可能会有简化。`,{title:'切换编辑格式',confirmText:'转换'}))||!isCurrentDocument(context))return;content.value=format==='HTML'?markdownToHtml(original):htmlToMarkdown(original);contentFormat.value=format;markLocalDraft();await handleSave()}
 function togglePanel(panel){activePanel.value=activePanel.value===panel?'':panel} function replaceOne(){if(isCrdt.value){crdtEditor.value?.replaceText(searchForm.query,searchForm.replacement,false);return}if(!searchForm.query||!content.value.includes(searchForm.query))return;content.value=content.value.replace(searchForm.query,searchForm.replacement);handleContentChange()} function replaceAll(){if(isCrdt.value){crdtEditor.value?.replaceText(searchForm.query,searchForm.replacement,true);return}if(!searchForm.query)return;content.value=content.value.split(searchForm.query).join(searchForm.replacement);handleContentChange()}
 function startPanelResize(event){if(window.innerWidth<=1100)return;event.preventDefault();panelResizeHandler=movePanelResize;panelResizeEndHandler=stopPanelResize;document.body.classList.add('resizing-panel');window.addEventListener('pointermove',panelResizeHandler);window.addEventListener('pointerup',panelResizeEndHandler,{once:true})}
 function movePanelResize(event){const maximum=Math.max(280,window.innerWidth-360);panelWidth.value=Math.min(maximum,Math.max(240,window.innerWidth-event.clientX))}
 function stopPanelResize(){if(panelResizeHandler)window.removeEventListener('pointermove',panelResizeHandler);if(panelResizeEndHandler)window.removeEventListener('pointerup',panelResizeEndHandler);panelResizeHandler=null;panelResizeEndHandler=null;document.body.classList.remove('resizing-panel')}
 function scrollToHeading(index){if(isCrdt.value&&crdtEditor.value?.focusHeading(index))return;const headings=document.querySelectorAll('.editor-container h1,.editor-container h2,.editor-container h3,.editor-container h4,.editor-container h5,.editor-container h6');headings[index]?.scrollIntoView({behavior:'smooth',block:'center'})}
 function toggleOutlineHeading(index){crdtEditor.value?.toggleHeading(index)}
-async function loadCheckpoint(){panelLoading.value=true;try{const [status,history]=await Promise.all([crdtApi.checkpointStatus(docId.value),crdtApi.checkpointHistory(docId.value)]);Object.assign(checkpointInfo,status.data||{});checkpointHistory.value=history.data?.items||[]}catch(exception){error(exception.message||'协作恢复点加载失败')}finally{panelLoading.value=false}}
-const checkpointReason=reason=>({MANUAL:'手动创建',SCHEDULED:'定时保存',THRESHOLD:'修改数量达到上限',RESTORE:'恢复历史状态'}[reason]||'系统自动保存')
-async function createCheckpoint(){if(!(await confirmDialog('立即整理当前协作数据，并创建一个可恢复的安全点？',{title:'创建协作恢复点',confirmText:'立即创建'})))return;panelLoading.value=true;try{const response=await crdtApi.createCheckpoint(docId.value);Object.assign(checkpointInfo,response.data||{});await loadCheckpoint();success('协作恢复点已创建并验证成功')}catch(exception){error(exception.message||'协作恢复点创建失败')}finally{panelLoading.value=false}}
-async function restoreCheckpoint(item){if(!(await confirmDialog(`恢复到 ${formatDate(item.createdAt)} 的协作状态？当前连接会短暂断开，并用该时间点的内容替换当前内容。`,{title:'恢复历史协作状态',confirmText:'确认恢复',danger:true})))return;panelLoading.value=true;try{await crdtApi.restoreCheckpoint(docId.value,item.id);success('历史协作状态已恢复，正在重新连接文档');setTimeout(()=>location.reload(),400)}catch(exception){error(exception.message||'历史协作状态恢复失败')}finally{panelLoading.value=false}}
+async function loadDocumentList(request,target,message){
+  const context=documentContext();panelLoading.value=true
+  try{const response=await request(context.id);if(isCurrentDocument(context))target.value=response.data||[]}
+  catch(exception){if(isCurrentDocument(context)){if(message)error(exception.message||message);else target.value=[]}}
+  finally{if(isCurrentDocument(context))panelLoading.value=false}
+}
+async function loadCheckpoint(){const context=documentContext();panelLoading.value=true;try{const [status,history]=await Promise.all([crdtApi.checkpointStatus(context.id),crdtApi.checkpointHistory(context.id)]);if(!isCurrentDocument(context))return;Object.assign(checkpointInfo,status.data||{});checkpointHistory.value=history.data?.items||[]}catch(exception){if(isCurrentDocument(context))error(exception.message||'协作恢复点加载失败')}finally{if(isCurrentDocument(context))panelLoading.value=false}}
+const checkpointReason=reason=>({MANUAL:'手动创建',AUTO:'系统自动保存',PRE_RESTORE:'恢复前备份'}[reason]||'系统自动保存')
+async function createCheckpoint(){const context=documentContext();if(!(await confirmDialog('立即整理当前协作数据，并创建一个可恢复的安全点？',{title:'创建协作恢复点',confirmText:'立即创建'}))||!isCurrentDocument(context))return;panelLoading.value=true;try{const response=await crdtApi.createCheckpoint(context.id);if(!isCurrentDocument(context))return;Object.assign(checkpointInfo,response.data||{});await loadCheckpoint();if(isCurrentDocument(context))success('协作恢复点已创建并验证成功')}catch(exception){if(isCurrentDocument(context))error(exception.message||'协作恢复点创建失败')}finally{if(isCurrentDocument(context))panelLoading.value=false}}
+async function restoreCheckpoint(item){const context=documentContext(),id=item.id;if(!(await confirmDialog(`恢复到 ${formatDate(item.createdAt)} 的协作状态？当前连接会短暂断开，并用该时间点的内容替换当前内容。`,{title:'恢复历史协作状态',confirmText:'确认恢复',danger:true}))||!isCurrentDocument(context))return;panelLoading.value=true;try{await crdtApi.restoreCheckpoint(context.id,id);if(!isCurrentDocument(context))return;success('历史协作状态已恢复，正在重新连接文档');setTimeout(()=>{if(isCurrentDocument(context))location.reload()},400)}catch(exception){if(isCurrentDocument(context))error(exception.message||'历史协作状态恢复失败')}finally{if(isCurrentDocument(context))panelLoading.value=false}}
 function handleShortcut(event){if((event.ctrlKey||event.metaKey)&&event.key.toLowerCase()==='s'){event.preventDefault();event.shiftKey&&!isCrdt.value?handleSaveVersion():handleSave()}if((event.ctrlKey||event.metaKey)&&event.key.toLowerCase()==='f'){event.preventDefault();activePanel.value='search'}} function handleBeforeUnload(event){if(hasUnsaved.value){event.preventDefault();event.returnValue=''}}
 const draftKey=()=>`docflow:draft:${docId.value}`;function readDraft(){try{return JSON.parse(localStorage.getItem(draftKey())||'null')}catch{return null}}function clearDraft(){localStorage.removeItem(draftKey())}
-async function handleUploadImages(files,callback){try{const urls=[];for(const file of files){const response=await fileApi.uploadImage(file);urls.push(response.data.url)}callback(urls);success('图片上传成功')}catch(exception){error(exception.message||'图片上传失败')}}
+async function handleUploadImages(files,callback){const context=documentContext();try{const urls=[];for(const file of files){const response=await fileApi.uploadImage(file,context.id);urls.push(response.data.url)}if(!isCurrentDocument(context))return;callback(urls);success('图片上传成功')}catch(exception){if(isCurrentDocument(context))error(exception.message||'图片上传失败')}}
 function handleEditorDrop(event){if(contentFormat.value!=='MARKDOWN')return;const files=[...(event.dataTransfer?.files||[])].filter(file=>file.type.startsWith('image/'));if(!files.length)return;event.preventDefault();handleUploadImages(files,urls=>{content.value+=urls.map(url=>`\n![](${url})\n`).join('');handleContentChange()})} function handleEditorPaste(event){if(contentFormat.value!=='MARKDOWN')return;const files=[...(event.clipboardData?.files||[])].filter(file=>file.type.startsWith('image/'));if(!files.length)return;event.preventDefault();handleUploadImages(files,urls=>{content.value+=urls.map(url=>`\n![](${url})\n`).join('');handleContentChange()})}
-async function loadAttachments(){panelLoading.value=true;try{const response=await attachmentApi.list(docId.value);attachments.value=response.data||[]}catch(exception){error(exception.message||'附件加载失败')}finally{panelLoading.value=false}} async function uploadAttachments(event){const files=[...(event.target.files||[])];event.target.value='';for(const file of files){try{await attachmentApi.upload(docId.value,file)}catch(exception){error(`${file.name} 上传失败：${exception.message||''}`)}}await loadAttachments()} async function removeAttachment(item){if(!(await confirmDialog(`删除附件“${item.originalName}”？`,{title:'删除附件',confirmText:'删除',danger:true})))return;try{await attachmentApi.remove(docId.value,item.id);attachments.value=attachments.value.filter(a=>a.id!==item.id);success('附件已删除')}catch(exception){error(exception.message||'删除失败')}}
-async function loadTags(){try{const response=await tagApi.forDocument(docId.value);metadata.tags=(response.data||[]).map(tag=>tag.name).join(', ')}catch{metadata.tags=''}} async function saveMetadata(){try{const response=await docApi.update(docId.value,{category:metadata.category});if(docData.value)Object.assign(docData.value,response.data);await tagApi.setForDocument(docId.value,metadata.tags.split(/[,，]/).map(x=>x.trim()).filter(Boolean));success('文档信息已保存')}catch(exception){error(exception.message||'保存失败')}} async function saveAsTemplate(){const name=await promptDialog('保存为模板',docTitle.value,{message:'请输入模板名称。',placeholder:'模板名称',confirmText:'保存'});if(!name?.trim())return;try{await templateApi.create({name:name.trim(),description:`来自文档：${docTitle.value}`,category:metadata.category||null,content:content.value,contentFormat:contentFormat.value});success('已保存为模板')}catch(exception){error(exception.message||'模板保存失败')}}
-async function changePageFormat(format){if(!['A4','LETTER'].includes(format)||format===pageSettings.pageFormat)return;const previous=pageSettings.pageFormat;pageSettings.pageFormat=format;try{const response=await docApi.update(docId.value,{pageFormat:format});if(docData.value)Object.assign(docData.value,response.data);success(`页面已切换为 ${format==='LETTER'?'Letter':'A4'}`)}catch(exception){pageSettings.pageFormat=previous;error(exception.message||'页面大小切换失败')}}
-async function savePageSettings(settings){const previous={...pageSettings};Object.assign(pageSettings,settings);try{const response=await docApi.update(docId.value,settings);if(docData.value)Object.assign(docData.value,response.data);success('页面设置已保存')}catch(exception){Object.assign(pageSettings,previous);error(exception.message||'页面设置保存失败')}}
-async function loadVersions(){panelLoading.value=true;try{const response=await versionApi.list(docId.value);versions.value=response.data||[]}catch(exception){error(exception.message||'版本加载失败')}finally{panelLoading.value=false}}
-async function handleSaveVersion(){if(!(await handleSave()))return;const name=await promptDialog('保存历史版本',`版本 ${versions.value.length+1}`,{message:'为这次保存设置一个易于识别的名称。',confirmText:'下一步'});if(name===null)return;const description=await promptDialog('添加版本说明','',{message:'可选：简要说明这个版本修改了什么。',multiline:true,confirmText:'保存版本'});if(description===null)return;try{await versionApi.save(docId.value,{content:isCrdt.value?currentEditorHtml():null,name:name.trim()||null,description:description.trim()||null});success('历史版本已保存');await loadVersions()}catch(exception){error(exception.message||'版本保存失败')}}
-async function previewVersion(version){const response=await versionApi.detail(docId.value,version.versionNum);preview.version=response.data;preview.open=true}
-async function compareVersion(version){compareSelection.value.push(version);compareSelection.value=[...new Map(compareSelection.value.map(item=>[item.id,item])).values()].slice(-2);if(compareSelection.value.length<2)return;try{const selected=[...compareSelection.value].sort((a,b)=>Number(a.versionNum)-Number(b.versionNum));const [older,newer]=await Promise.all(selected.map(item=>versionApi.detail(docId.value,item.versionNum)));comparison.title=`v${older.data.versionNum} 与 v${newer.data.versionNum} 对比`;comparison.olderLabel=`较早版本 · v${older.data.versionNum}`;comparison.newerLabel=`较新版本 · v${newer.data.versionNum}`;comparison.rows=buildSideBySideDiff(plainVersionText(older.data),plainVersionText(newer.data));comparison.open=true}catch(exception){error(exception.message||'版本对比失败')}finally{compareSelection.value=[]}}
+function loadAttachments(){return loadDocumentList(id=>attachmentApi.list(id),attachments,'附件加载失败')}
+async function uploadAttachments(event){const context=documentContext(),files=[...(event.target.files||[])];event.target.value='';for(const file of files){try{await attachmentApi.upload(context.id,file)}catch(exception){if(isCurrentDocument(context))error(`${file.name} 上传失败：${exception.message||''}`)}}if(isCurrentDocument(context))await loadAttachments()}
+async function removeAttachment(item){const context=documentContext(),id=item.id,name=item.originalName;if(!(await confirmDialog(`删除附件“${name}”？`,{title:'删除附件',confirmText:'删除',danger:true}))||!isCurrentDocument(context))return;try{await attachmentApi.remove(context.id,id);if(!isCurrentDocument(context))return;attachments.value=attachments.value.filter(a=>a.id!==id);success('附件已删除')}catch(exception){if(isCurrentDocument(context))error(exception.message||'删除失败')}}
+async function loadTags(){const context=documentContext();try{const response=await tagApi.forDocument(context.id);if(isCurrentDocument(context))metadata.tags=(response.data||[]).map(tag=>tag.name).join(', ')}catch{if(isCurrentDocument(context))metadata.tags=''}}
+async function saveMetadata(){
+  const context=documentContext(),payload={category:metadata.category},tags=metadata.tags.split(/[,，]/).map(x=>x.trim()).filter(Boolean)
+  try{const response=await docApi.update(context.id,payload);await tagApi.setForDocument(context.id,tags);if(!isCurrentDocument(context))return;if(docData.value)Object.assign(docData.value,response.data);success('文档信息已保存')}catch(exception){if(isCurrentDocument(context))error(exception.message||'保存失败')}
+}
+async function saveAsTemplate(){
+  const context=documentContext(),title=docTitle.value,payload={description:`来自文档：${title}`,category:metadata.category||null,content:content.value,contentFormat:contentFormat.value}
+  const name=await promptDialog('保存为模板',title,{message:'请输入模板名称。',placeholder:'模板名称',confirmText:'保存'});if(!name?.trim()||!isCurrentDocument(context))return
+  try{await templateApi.create({...payload,name:name.trim()});if(isCurrentDocument(context))success('已保存为模板')}catch(exception){if(isCurrentDocument(context))error(exception.message||'模板保存失败')}
+}
+async function changePageFormat(format){if(!['A4','LETTER'].includes(format)||format===pageSettings.pageFormat)return;const context=documentContext(),previous=pageSettings.pageFormat;pageSettings.pageFormat=format;try{const response=await docApi.update(context.id,{pageFormat:format});if(!isCurrentDocument(context))return;if(docData.value)Object.assign(docData.value,response.data);success(`页面已切换为 ${format==='LETTER'?'Letter':'A4'}`)}catch(exception){if(!isCurrentDocument(context))return;pageSettings.pageFormat=previous;error(exception.message||'页面大小切换失败')}}
+async function savePageSettings(settings){const context=documentContext(),previous={...pageSettings},payload={...settings};Object.assign(pageSettings,payload);try{const response=await docApi.update(context.id,payload);if(!isCurrentDocument(context))return;if(docData.value)Object.assign(docData.value,response.data);success('页面设置已保存')}catch(exception){if(!isCurrentDocument(context))return;Object.assign(pageSettings,previous);error(exception.message||'页面设置保存失败')}}
+function loadVersions(){return loadDocumentList(id=>versionApi.list(id),versions,'版本加载失败')}
+async function handleSaveVersion(){const context=documentContext(),savedContent=isCrdt.value?currentEditorHtml():null,defaultName=`版本 ${versions.value.length+1}`;if(!(await handleSave())||!isCurrentDocument(context))return;const name=await promptDialog('保存历史版本',defaultName,{message:'为这次保存设置一个易于识别的名称。',confirmText:'下一步'});if(name===null||!isCurrentDocument(context))return;const description=await promptDialog('添加版本说明','',{message:'可选：简要说明这个版本修改了什么。',multiline:true,confirmText:'保存版本'});if(description===null||!isCurrentDocument(context))return;try{await versionApi.save(context.id,{content:savedContent,name:name.trim()||null,description:description.trim()||null});if(!isCurrentDocument(context))return;success('历史版本已保存');await loadVersions()}catch(exception){if(isCurrentDocument(context))error(exception.message||'版本保存失败')}}
+async function previewVersion(version){const context=documentContext(),versionNum=version.versionNum;const response=await versionApi.detail(context.id,versionNum);if(!isCurrentDocument(context))return;preview.version=response.data;preview.open=true}
+async function compareVersion(version){const context=documentContext();compareSelection.value.push(version);compareSelection.value=[...new Map(compareSelection.value.map(item=>[item.id,item])).values()].slice(-2);if(compareSelection.value.length<2)return;try{const selected=[...compareSelection.value].sort((a,b)=>Number(a.versionNum)-Number(b.versionNum));const [older,newer]=await Promise.all(selected.map(item=>versionApi.detail(context.id,item.versionNum)));if(!isCurrentDocument(context))return;comparison.title=`v${older.data.versionNum} 与 v${newer.data.versionNum} 对比`;comparison.olderLabel=`较早版本 · v${older.data.versionNum}`;comparison.newerLabel=`较新版本 · v${newer.data.versionNum}`;comparison.rows=buildSideBySideDiff(plainVersionText(older.data),plainVersionText(newer.data));comparison.open=true}catch(exception){if(isCurrentDocument(context))error(exception.message||'版本对比失败')}finally{if(isCurrentDocument(context))compareSelection.value=[]}}
 function plainVersionText(version){if(version.contentFormat!=='HTML')return version.content||'';const html=sanitizeHtml(version.content||'').replace(/<br\s*\/?\s*>/gi,'\n').replace(/<\/(p|h[1-6]|li|blockquote|pre|tr|table)>/gi,'</$1>\n');const root=document.createElement('div');root.innerHTML=html;return (root.textContent||'').replace(/\u00a0/g,' ').replace(/\n{3,}/g,'\n\n').trimEnd()}
 function changedParts(before,after){before=before??'';after=after??'';let prefix=0;const limit=Math.min(before.length,after.length);while(prefix<limit&&before[prefix]===after[prefix])prefix++;let suffix=0;while(suffix<limit-prefix&&before[before.length-1-suffix]===after[after.length-1-suffix])suffix++;const parts=(value)=>{const result=[];if(prefix)result.push({text:value.slice(0,prefix),changed:false});const end=suffix?value.length-suffix:value.length;if(end>prefix)result.push({text:value.slice(prefix,end),changed:true});if(suffix)result.push({text:value.slice(value.length-suffix),changed:false});return result.length?result:[{text:' ',changed:value.length===0}]};return [parts(before),parts(after)]}
 function buildSideBySideDiff(before,after){const oldLines=before.split(/\r?\n/),newLines=after.split(/\r?\n/),rows=[];let oldIndex=0,newIndex=0,oldNumber=1,newNumber=1;const addRow=(oldLine,newLine,type)=>{const [oldParts,newParts]=changedParts(oldLine,newLine);rows.push({type,oldNumber:oldLine==null?null:oldNumber++,newNumber:newLine==null?null:newNumber++,oldParts:oldLine==null?[]:oldParts,newParts:newLine==null?[]:newParts})};while(oldIndex<oldLines.length||newIndex<newLines.length){const oldLine=oldLines[oldIndex],newLine=newLines[newIndex];if(oldLine===newLine){addRow(oldLine??'',newLine??'','same');oldIndex++;newIndex++;continue}let oldMatch=-1,newMatch=-1;for(let look=1;look<=12;look++){if(oldMatch<0&&newIndex+look<newLines.length&&oldLine===newLines[newIndex+look])oldMatch=look;if(newMatch<0&&oldIndex+look<oldLines.length&&newLine===oldLines[oldIndex+look])newMatch=look}if(oldMatch>0&&(newMatch<0||oldMatch<=newMatch)){for(let count=0;count<oldMatch;count++){addRow(null,newLines[newIndex++],'added')}continue}if(newMatch>0){for(let count=0;count<newMatch;count++){addRow(oldLines[oldIndex++],null,'removed')}continue}addRow(oldLine??null,newLine??null,'changed');if(oldIndex<oldLines.length)oldIndex++;if(newIndex<newLines.length)newIndex++}return rows}
-async function rollbackVersion(version){if(!(await confirmDialog(`恢复到版本 v${version.versionNum}？当前内容会作为新修改被替换。`,{title:'恢复历史版本',confirmText:'确认恢复',danger:true})))return;try{const response=await versionApi.rollback(docId.value,version.versionNum);if(isCrdt.value){docTitle.value=response.data.title||docTitle.value;acceptedTitle.value=docTitle.value;content.value=sanitizeHtml(response.data.content||'');if(docData.value)Object.assign(docData.value,response.data)}else applyDocument(response.data);success('文档已恢复，恢复内容将作为新的协作修改同步')}catch(exception){error(exception.message||'恢复版本失败')}}
-async function handleDeleteVersions(){if(!(await confirmDialog('清空全部版本历史？清空后无法恢复。',{title:'清空版本历史',confirmText:'全部清空',danger:true})))return;try{await versionApi.deleteAll(docId.value);versions.value=[];success('版本历史已清空')}catch(exception){error(exception.message||'版本历史清空失败')}}
+async function rollbackVersion(version){const context=documentContext(),versionNum=version.versionNum,crdt=isCrdt.value;if(!(await confirmDialog(`恢复到版本 v${versionNum}？当前内容会作为新修改被替换。`,{title:'恢复历史版本',confirmText:'确认恢复',danger:true}))||!isCurrentDocument(context))return;try{const response=await versionApi.rollback(context.id,versionNum);if(!isCurrentDocument(context))return;if(crdt){docTitle.value=response.data.title||docTitle.value;acceptedTitle.value=docTitle.value;content.value=sanitizeHtml(response.data.content||'');if(docData.value)Object.assign(docData.value,response.data)}else applyDocument(response.data);success('文档已恢复，恢复内容将作为新的协作修改同步')}catch(exception){if(isCurrentDocument(context))error(exception.message||'恢复版本失败')}}
+async function handleDeleteVersions(){const context=documentContext();if(!(await confirmDialog('清空全部版本历史？清空后无法恢复。',{title:'清空版本历史',confirmText:'全部清空',danger:true}))||!isCurrentDocument(context))return;try{await versionApi.deleteAll(context.id);if(!isCurrentDocument(context))return;versions.value=[];success('版本历史已清空')}catch(exception){if(isCurrentDocument(context))error(exception.message||'版本历史清空失败')}}
 
-async function loadComments(){panelLoading.value=true;try{const response=await commentApi.list(docId.value);comments.value=response.data||[]}catch(exception){error(exception.message||'批注加载失败')}finally{panelLoading.value=false}}
+function loadComments(){return loadDocumentList(id=>commentApi.list(id),comments,'批注加载失败')}
 function handleCommentEvent(){if(activePanel.value==='comments')loadComments()}
 async function openCommentThread(commentId){
+  const context=documentContext()
   activeCommentId.value=Number(commentId)
   commentFilter.value='ALL'
   activePanel.value='comments'
   await loadComments()
   await nextTick()
+  if(!isCurrentDocument(context))return
   document.querySelector(`[data-comment-thread-id="${activeCommentId.value}"]`)?.scrollIntoView({behavior:'smooth',block:'center'})
 }
 function activateCommentThread(thread){activeCommentId.value=thread.id;crdtEditor.value?.focusComment(thread.id)}
 function openCommentDialog(selectedText=''){Object.assign(commentDialog,{open:true,parentId:null,selectedText:selectedText||'',content:''})}
 function replyComment(thread){Object.assign(commentDialog,{open:true,parentId:thread.id,selectedText:thread.selectedText||'',content:''})}
 function closeCommentDialog(){Object.assign(commentDialog,{open:false,parentId:null,selectedText:'',content:''})}
-async function submitCommentDialog(){if(!commentDialog.content.trim())return;try{const payload={content:commentDialog.content.trim(),parentId:commentDialog.parentId||undefined,selectedText:commentDialog.parentId?undefined:commentDialog.selectedText};const response=await commentApi.create(docId.value,payload);if(commentDialog.parentId){comments.value.push(response.data);success('回复已发送')}else{if(!crdtEditor.value?.addComment(response.data.id))warning('批注已创建，但原选区已失效，请删除后重新选择文字');comments.value.unshift(response.data);activePanel.value='comments';success('批注已添加')}crdtEditor.value?.broadcastCommentEvent('created',response.data.id);closeCommentDialog()}catch(exception){error(exception.message||(commentDialog.parentId?'回复失败':'批注添加失败'))}}
+async function submitCommentDialog(){if(!commentDialog.content.trim())return;const context=documentContext(),payload={content:commentDialog.content.trim(),parentId:commentDialog.parentId||undefined,selectedText:commentDialog.parentId?undefined:commentDialog.selectedText};try{const response=await commentApi.create(context.id,payload);if(!isCurrentDocument(context))return;if(payload.parentId){comments.value.push(response.data);success('回复已发送')}else{if(!crdtEditor.value?.addComment(response.data.id))warning('批注已创建，但原选区已失效，请删除后重新选择文字');comments.value.unshift(response.data);activePanel.value='comments';success('批注已添加')}crdtEditor.value?.broadcastCommentEvent('created',response.data.id);closeCommentDialog()}catch(exception){if(isCurrentDocument(context))error(exception.message||(payload.parentId?'回复失败':'批注添加失败'))}}
 async function toggleCommentStatus(item){
-  const resolved=item.status!=='RESOLVED'
+  const context=documentContext(),id=item.id,resolved=item.status!=='RESOLVED'
   try{
-    const response=await commentApi.setResolved(docId.value,item.id,resolved)
+    const response=await commentApi.setResolved(context.id,id,resolved)
+    if(!isCurrentDocument(context))return
     Object.assign(item,response.data||{},{status:resolved?'RESOLVED':'OPEN'})
     crdtEditor.value?.broadcastCommentEvent('updated',item.id)
     selectedCommentIds.value=selectedCommentIds.value.filter(id=>id!==item.id)
     success(resolved?'批注已解决':'批注已重新打开')
-  }catch(exception){error(exception.message||'批注状态更新失败')}
+  }catch(exception){if(isCurrentDocument(context))error(exception.message||'批注状态更新失败')}
 }
 function removeComment(item){Object.assign(deleteCommentDialog,{open:true,item,busy:false})}
 function closeDeleteCommentDialog(){if(deleteCommentDialog.busy)return;deleteCommentDialog.open=false;deleteCommentDialog.item=null}
 async function confirmRemoveComment(){
-  const item=deleteCommentDialog.item
+  const context=documentContext(),item=deleteCommentDialog.item
   if(!item)return
+  const id=item.id
   deleteCommentDialog.busy=true
   try{
-    await commentApi.remove(docId.value,item.id)
-    crdtEditor.value?.removeComment(item.id)
-    comments.value=comments.value.filter(comment=>comment.id!==item.id&&comment.parentId!==item.id)
-    if(activeCommentId.value===item.id)activeCommentId.value=null
-    crdtEditor.value?.broadcastCommentEvent('deleted',item.id)
+    await commentApi.remove(context.id,id)
+    if(!isCurrentDocument(context))return
+    crdtEditor.value?.removeComment(id)
+    comments.value=comments.value.filter(comment=>comment.id!==id&&comment.parentId!==id)
+    if(activeCommentId.value===id)activeCommentId.value=null
+    crdtEditor.value?.broadcastCommentEvent('deleted',id)
     deleteCommentDialog.open=false;deleteCommentDialog.item=null
     success('批注已删除')
-  }catch(exception){error(exception.message||'批注删除失败')}
-  finally{deleteCommentDialog.busy=false}
+  }catch(exception){if(isCurrentDocument(context))error(exception.message||'批注删除失败')}
+  finally{if(isCurrentDocument(context))deleteCommentDialog.busy=false}
 }
-async function resolveSelectedComments(){try{const ids=[...selectedCommentIds.value];await commentApi.resolveBatch(docId.value,ids,true);comments.value.forEach(item=>{if(ids.includes(item.id))item.status='RESOLVED'});ids.forEach(id=>crdtEditor.value?.broadcastCommentEvent('updated',id));selectedCommentIds.value=[];success('所选批注已解决')}catch(exception){error(exception.message||'批量处理失败')}}
+async function resolveSelectedComments(){const context=documentContext(),ids=[...selectedCommentIds.value];try{await commentApi.resolveBatch(context.id,ids,true);if(!isCurrentDocument(context))return;comments.value.forEach(item=>{if(ids.includes(item.id))item.status='RESOLVED'});ids.forEach(id=>crdtEditor.value?.broadcastCommentEvent('updated',id));selectedCommentIds.value=[];success('所选批注已解决')}catch(exception){if(isCurrentDocument(context))error(exception.message||'批量处理失败')}}
 
 function currentEditorHtml(){return isCrdt.value?(crdtEditor.value?.getHtml()||content.value):(contentFormat.value==='HTML'?content.value:markdownToHtml(content.value))}
 function renderedEditorHtml(){return document.querySelector('.editor-container .tiptap')?.innerHTML||currentEditorHtml()}
@@ -217,8 +334,11 @@ async function buildOfflineHtml(){const parser=new DOMParser(),page=parser.parse
 function openPrintPreview(){printPreview.html=htmlDocument(renderedEditorHtml());printPreview.open=true}
 function printPreviewFrame(){printFrame.value?.contentWindow?.focus();printFrame.value?.contentWindow?.print()}
 function printDocument(){openPrintPreview()}
-async function createShare(){try{const response=await shareApi.create(docId.value,{permission:'READ',password:shareForm.password||null,expireTime:shareForm.expireTime?`${shareForm.expireTime}:00`:null});shareLink.value=`${location.origin}/share/${response.data.token}`;success('分享链接已生成')}catch(exception){error(exception.message||'分享失败')}} async function copyShareLink(){try{await navigator.clipboard.writeText(shareLink.value);success('链接已复制')}catch{error('复制失败')}}
-async function loadCollaborators(){panelLoading.value=true;try{const response=await permissionApi.list(docId.value);collaborators.value=response.data||[]}catch{collaborators.value=[]}finally{panelLoading.value=false}} async function addCollaborator(){try{await permissionApi.add(docId.value,collaboratorForm);collaboratorForm.username='';await loadCollaborators()}catch(exception){error(exception.message||'添加失败')}} async function updateCollaborator(person,permission){try{await permissionApi.update(docId.value,person.userId,{permission});person.permission=permission}catch(exception){error(exception.message||'更新失败')}} async function removeCollaborator(person){if(!(await confirmDialog(`移除协作者“${person.username}”？移除后对方将无法继续访问此文档。`,{title:'移除协作者',confirmText:'移除',danger:true})))return;try{await permissionApi.remove(docId.value,person.userId);collaborators.value=collaborators.value.filter(item=>item.userId!==person.userId);success('协作者已移除')}catch(exception){error(exception.message||'移除协作者失败')}}
+async function createShare(){const context=documentContext(),payload={permission:'READ',password:shareForm.password||null,expireTime:shareForm.expireTime?`${shareForm.expireTime}:00`:null};try{const response=await shareApi.create(context.id,payload);if(!isCurrentDocument(context))return;shareLink.value=`${location.origin}/share/${response.data.token}`;success('分享链接已生成')}catch(exception){if(isCurrentDocument(context))error(exception.message||'分享失败')}} async function copyShareLink(){const context=documentContext();try{await navigator.clipboard.writeText(shareLink.value);if(isCurrentDocument(context))success('链接已复制')}catch{if(isCurrentDocument(context))error('复制失败')}}
+function loadCollaborators(){return loadDocumentList(id=>permissionApi.list(id),collaborators)}
+async function addCollaborator(){const context=documentContext(),payload={...collaboratorForm};try{await permissionApi.add(context.id,payload);if(!isCurrentDocument(context))return;collaboratorForm.username='';await loadCollaborators()}catch(exception){if(isCurrentDocument(context))error(exception.message||'添加失败')}}
+async function updateCollaborator(person,permission){const context=documentContext(),userId=person.userId;try{await permissionApi.update(context.id,userId,{permission});if(isCurrentDocument(context))person.permission=permission}catch(exception){if(isCurrentDocument(context))error(exception.message||'更新失败')}}
+async function removeCollaborator(person){const context=documentContext(),userId=person.userId,username=person.username;if(!(await confirmDialog(`移除协作者“${username}”？移除后对方将无法继续访问此文档。`,{title:'移除协作者',confirmText:'移除',danger:true}))||!isCurrentDocument(context))return;try{await permissionApi.remove(context.id,userId);if(!isCurrentDocument(context))return;collaborators.value=collaborators.value.filter(item=>item.userId!==userId);success('协作者已移除')}catch(exception){if(isCurrentDocument(context))error(exception.message||'移除协作者失败')}}
 const versionLabel=type=>({AUTO:'自动',MANUAL:'手动',ROLLBACK:'回滚'}[type]||'自动'),formatTime=time=>time?dayjs(time).fromNow():'-',formatDate=time=>time?dayjs(time).format('YYYY-MM-DD HH:mm'):'-',formatBytes=size=>size<1024?`${size} B`:size<1048576?`${(size/1024).toFixed(1)} KB`:`${(size/1048576).toFixed(1)} MB`
 </script>
 

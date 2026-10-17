@@ -58,7 +58,12 @@ public class CrdtCheckpointService {
 
     /** 将历史HTML转换并写入权威Y.Doc，用于版本回滚而非只改物化副本。 */
     public Map<String, Object> replaceContent(Long documentId, String html) {
-        return request(documentId, "/content", "POST", Map.of("html", html == null ? "" : html), "替换协作文档内容");
+        return replaceContent(documentId, html, "HTML");
+    }
+
+    public Map<String, Object> replaceContent(Long documentId, String content, String contentFormat) {
+        return request(documentId, "/content", "POST", Map.of("html", content == null ? "" : content,
+                "contentFormat", "MARKDOWN".equals(contentFormat) ? "MARKDOWN" : "HTML"), "替换协作文档内容");
     }
 
     private Map<String, Object> request(Long documentId, String suffix, String method, Object body, String action) {

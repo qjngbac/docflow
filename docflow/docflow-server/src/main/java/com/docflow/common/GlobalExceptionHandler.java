@@ -15,8 +15,8 @@ import org.springframework.web.multipart.MaxUploadSizeExceededException;
 public class GlobalExceptionHandler {
 
     @ExceptionHandler(BusinessException.class)
-    public Result<Void> handleBusinessException(BusinessException e) {
-        return Result.error(e.getCode(), e.getMessage());
+    public org.springframework.http.ResponseEntity<Result<Void>> handleBusinessException(BusinessException e) {
+        return org.springframework.http.ResponseEntity.status(e.getCode()).body(Result.error(e.getCode(), e.getMessage()));
     }
 
     @ExceptionHandler({
@@ -25,18 +25,19 @@ public class GlobalExceptionHandler {
             ConstraintViolationException.class,
             HttpMessageNotReadableException.class
     })
-    public Result<Void> handleBadRequest(Exception e) {
-        return Result.error(ErrorCode.BAD_REQUEST.getCode(), "Invalid request parameters");
+    public org.springframework.http.ResponseEntity<Result<Void>> handleBadRequest(Exception e) {
+        return org.springframework.http.ResponseEntity.badRequest().body(Result.error(ErrorCode.BAD_REQUEST.getCode(), "Invalid request parameters"));
     }
 
     @ExceptionHandler(MaxUploadSizeExceededException.class)
-    public Result<Void> handleMaxUploadSizeExceeded(MaxUploadSizeExceededException e) {
-        return Result.error(ErrorCode.PAYLOAD_TOO_LARGE.getCode(), "File is too large");
+    public org.springframework.http.ResponseEntity<Result<Void>> handleMaxUploadSizeExceeded(MaxUploadSizeExceededException e) {
+        return org.springframework.http.ResponseEntity.status(413).body(Result.error(ErrorCode.PAYLOAD_TOO_LARGE.getCode(), "File is too large"));
     }
 
     @ExceptionHandler(Exception.class)
-    public Result<Void> handleException(Exception e) {
+    public org.springframework.http.ResponseEntity<Result<Void>> handleException(Exception e) {
         log.error("Unhandled server error", e);
-        return Result.error(ErrorCode.INTERNAL_ERROR.getCode(), ErrorCode.INTERNAL_ERROR.getMessage());
+        return org.springframework.http.ResponseEntity.internalServerError()
+                .body(Result.error(ErrorCode.INTERNAL_ERROR.getCode(), ErrorCode.INTERNAL_ERROR.getMessage()));
     }
 }

@@ -50,8 +50,19 @@ class VersionServiceTest {
 
         Document result = versionService.rollback(8L, 1, 2L);
 
-        verify(crdtCheckpointService).replaceContent(8L, "<p>Earlier</p>");
+        verify(crdtCheckpointService).replaceContent(8L, "<p>Earlier</p>", "HTML");
         verify(documentMapper).updateById(document);
         assertThat(result.getContent()).isEqualTo("<p>Earlier</p>");
+    }
+
+    @Test
+    void locksTheDocumentBeforeAllocatingTheNextVersion() {
+        Document document = new Document(); document.setId(8L); document.setTitle("Version");
+        when(docVersionMapper.selectList(any())).thenReturn(List.of());
+        versionService.createSnapshot(document, 2L, "MANUAL");
+        var order = org.mockito.Mockito.inOrder(documentMapper, docVersionMapper);
+        order.verify(documentMapper).lockVersionSequence(8L);
+        order.verify(docVersionMapper).selectList(any());
+        order.verify(docVersionMapper).insert(any(com.docflow.entity.DocVersion.class));
     }
 }

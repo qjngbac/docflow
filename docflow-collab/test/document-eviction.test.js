@@ -35,10 +35,32 @@ test('evicting a loaded document closes its connections before unloading it', as
     unloadDocument: async (target) => {
       assert.equal(target, document)
       order.push('unloadDocument')
+      hocuspocus.documents.delete('7')
     }
   }
   await createDocumentEvictor(hocuspocus)('7')
   assert.deepEqual(order, ['closeConnections:7', 'unloadDocument'])
+})
+
+test('eviction waits for a real Hocuspocus pending store before returning', async () => {
+  let releaseStore
+  const gate = new Promise(resolve => { releaseStore = resolve })
+  const server = new Server({ port: 0, quiet: true, debounce: 60_000, maxDebounce: 60_000, onStoreDocument: () => gate })
+  const instance = server.hocuspocus
+  const document = await instance.createDocument('7', new Request('http://localhost'), 'test', { readOnly: false, isAuthenticated: true }, {})
+  document.getText('content').insert(0, 'pending')
+  let finished = false
+  const eviction = createDocumentEvictor(instance)(7).then(() => { finished = true })
+  try {
+    await new Promise(resolve => setImmediate(resolve))
+    assert.equal(finished, false, 'unloadDocument returns early while work is pending')
+    releaseStore()
+    await eviction
+    assert.equal(instance.documents.has('7'), false)
+  } finally {
+    releaseStore()
+    await server.destroy()
+  }
 })
 
 test('eviction tolerates a Hocuspocus instance without a documents table', async () => {

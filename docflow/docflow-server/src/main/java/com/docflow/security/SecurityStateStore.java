@@ -20,6 +20,7 @@ import java.util.concurrent.atomic.AtomicBoolean;
 @Component
 public class SecurityStateStore {
     private static final String PREFIX = "docflow:security:";
+    private static final int MAX_LOCAL_ENTRIES = 50_000;
 
     private final StringRedisTemplate redis;
     private final boolean failClosed;
@@ -45,12 +46,15 @@ public class SecurityStateStore {
         }
         requireSharedStateIfConfigured();
         long now = System.currentTimeMillis();
-        return local.compute(namespaced, (ignored, existing) -> {
-            if (existing == null || existing.expiresAt() <= now) {
-                return new LocalValue("1", now + ttl.toMillis());
-            }
-            return new LocalValue(Long.toString(parseLong(existing.value()) + 1L), existing.expiresAt());
-        }).asLong();
+        synchronized (local) {
+            requireLocalCapacity(namespaced);
+            return local.compute(namespaced, (ignored, existing) -> {
+                if (existing == null || existing.expiresAt() <= now) {
+                    return new LocalValue("1", now + ttl.toMillis());
+                }
+                return new LocalValue(Long.toString(parseLong(existing.value()) + 1L), existing.expiresAt());
+            }).asLong();
+        }
     }
 
     public void put(String key, String value, Duration ttl) {
@@ -64,7 +68,25 @@ public class SecurityStateStore {
             handleUnavailable(exception);
         }
         requireSharedStateIfConfigured();
-        local.put(namespaced, new LocalValue(value, System.currentTimeMillis() + ttl.toMillis()));
+        synchronized (local) {
+            requireLocalCapacity(namespaced);
+            local.put(namespaced, new LocalValue(value, System.currentTimeMillis() + ttl.toMillis()));
+        }
+    }
+
+    @org.springframework.scheduling.annotation.Scheduled(fixedDelay = 60_000)
+    public void removeExpiredLocalValues() {
+        long now = System.currentTimeMillis();
+        local.entrySet().removeIf(entry -> entry.getValue().expiresAt() <= now);
+    }
+
+    private void requireLocalCapacity(String key) {
+        if (!local.containsKey(key) && local.size() >= MAX_LOCAL_ENTRIES) {
+            removeExpiredLocalValues();
+            if (local.size() >= MAX_LOCAL_ENTRIES) {
+                throw new BusinessException(ErrorCode.SERVICE_UNAVAILABLE, "安全状态缓存已满，请稍后重试");
+            }
+        }
     }
 
     public String get(String key) {

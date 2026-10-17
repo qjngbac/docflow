@@ -15,6 +15,8 @@ import java.util.List;
 @Service
 public class TemplateService {
     @Autowired private DocumentTemplateMapper templateMapper;
+    @Autowired private FileAccessService fileAccessService;
+    @Autowired private FileService fileService;
 
     public List<DocumentTemplate> list(Long userId) {
         return templateMapper.selectList(new LambdaQueryWrapper<DocumentTemplate>()
@@ -30,6 +32,7 @@ public class TemplateService {
         return template;
     }
 
+    @org.springframework.transaction.annotation.Transactional
     public DocumentTemplate create(Long userId, DocumentTemplate request) {
         if (!StringUtils.hasText(request.getName()) || request.getName().length() > 100) {
             throw new BusinessException(ErrorCode.BAD_REQUEST, "Template name is required");
@@ -42,14 +45,19 @@ public class TemplateService {
         template.setContent(request.getContent() == null ? "" : request.getContent());
         template.setContentFormat("HTML".equals(request.getContentFormat()) ? "HTML" : "MARKDOWN");
         templateMapper.insert(template);
+        fileAccessService.associateTemplateReferences(template.getId(), template.getContent(), userId);
         return template;
     }
 
+    @org.springframework.transaction.annotation.Transactional
     public void delete(Long id, Long userId) {
         DocumentTemplate template = templateMapper.selectById(id);
         if (template == null || template.getOwnerId() == null || !template.getOwnerId().equals(userId)) {
             throw new BusinessException(ErrorCode.FORBIDDEN, "Cannot delete this template");
         }
+        List<String> urls = fileAccessService.templateUrls(id);
+        fileAccessService.removeTemplateReferences(id);
         templateMapper.deleteById(id);
+        urls.forEach(fileService::deleteAfterCommit);
     }
 }

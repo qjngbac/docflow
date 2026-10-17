@@ -109,8 +109,9 @@ test('checkpoint never binds LIMIT as a prepared-statement parameter', async () 
       statements.push({ sql, values })
       if (sql.includes('MAX(id)')) return [[{ high_water: 9 }]]
       if (sql.includes('FROM crdt_checkpoint WHERE')) {
-        return [[{ protocol_version: 1, checkpoint_seq: 0, payload: Buffer.from([1]) }]]
+        return [[{ protocol_version: 1, checkpoint_seq: 0, payload: Buffer.from(Y.encodeStateAsUpdate(new Y.Doc())) }]]
       }
+      if (sql.includes('FROM crdt_update WHERE')) return [[]]
       if (sql.startsWith('SELECT')) return [[{ id: 7 }]]
       return [{}]
     },
@@ -134,7 +135,14 @@ test('oversized binary messages are rejected before application', () => {
 
 test('increment persistence uses a per-document unique update id', async () => {
   let captured
-  const pool = { execute: async (sql, values) => { captured = { sql, values }; return [{}] } }
+  const connection = {
+    execute: async (sql, values) => {
+      if (sql.startsWith('SELECT')) return [[{ checkpoint_seq: 0, payload: Buffer.from(Y.encodeStateAsUpdate(new Y.Doc())) }]]
+      captured = { sql, values }; return [{}]
+    },
+    beginTransaction: async () => {}, commit: async () => {}, rollback: async () => {}, release() {}
+  }
+  const pool = { getConnection: async () => connection }
   const store = new CrdtStore(pool)
   const payload = new Uint8Array([1, 2, 3])
   const id = await store.appendUpdate(9, payload, 'client-a')
@@ -158,7 +166,8 @@ test('startup verifies durable CRDT tables before accepting connections', async 
   assert.deepEqual(calls, [
     'SELECT 1 FROM crdt_checkpoint LIMIT 1',
     'SELECT 1 FROM crdt_update LIMIT 1',
-    'SELECT 1 FROM crdt_checkpoint_history LIMIT 1'
+    'SELECT 1 FROM crdt_checkpoint_history LIMIT 1',
+    'SELECT 1 FROM crdt_materialization LIMIT 1'
   ])
 })
 

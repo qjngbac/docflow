@@ -33,20 +33,24 @@ public class VersionService {
     @Autowired
     private CrdtCheckpointService crdtCheckpointService;
 
+    @Transactional
     public void createSnapshot(Document document, Long userId) {
         createSnapshot(document, userId, "AUTO");
     }
 
+    @Transactional
     public void createSnapshot(Document document, Long userId, String versionType) {
         createSnapshot(document, userId, versionType, null, null);
     }
 
+    @Transactional
     public void createSnapshot(Document document, Long userId, String versionType,
                                String versionName, String description) {
+        documentMapper.lockVersionSequence(document.getId());
         Integer maxVersion = docVersionMapper.selectList(new LambdaQueryWrapper<DocVersion>()
                         .eq(DocVersion::getDocId, document.getId())
                         .orderByDesc(DocVersion::getVersionNum)
-                        .last("LIMIT 1"))
+                        .last("LIMIT 1 FOR UPDATE"))
                 .stream()
                 .findFirst()
                 .map(DocVersion::getVersionNum)
@@ -84,6 +88,7 @@ public class VersionService {
 
     public List<DocVersion> list(Long docId) {
         return docVersionMapper.selectList(new LambdaQueryWrapper<DocVersion>()
+                .select(DocVersion.class, field -> !"content".equals(field.getProperty()))
                 .eq(DocVersion::getDocId, docId)
                 .orderByDesc(DocVersion::getVersionNum));
     }
@@ -148,7 +153,7 @@ public class VersionService {
         documentMapper.updateById(document);
 
         if ("CRDT".equals(document.getCollabMode())) {
-            crdtCheckpointService.replaceContent(docId, document.getContent());
+            crdtCheckpointService.replaceContent(docId, document.getContent(), document.getContentFormat());
         }
 
         createSnapshot(document, userId, "ROLLBACK");

@@ -26,7 +26,7 @@ public class HtmlSanitizer {
                     "data-font-size", "data-text-color", "data-text-align", "data-line-height", "data-indent",
                     "data-collapsed", "data-equation-label", "data-equation-number", "data-formula-kind",
                     "data-footnote-id", "data-footnote-text", "data-citation-key", "data-citation-title",
-                    "data-citation-url")
+                    "data-citation-url", "data-row-height")
             .addProtocols("a", "href", "http", "https", "mailto")
             .addProtocols("img", "src", "http", "https")
             .preserveRelativeLinks(true);

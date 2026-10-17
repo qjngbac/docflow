@@ -1,9 +1,38 @@
-import { beforeEach, describe, expect, it } from 'vitest'
+import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { createPinia, setActivePinia } from 'pinia'
 import { useDocStore } from './index'
+import { docApi } from '../api'
+
+vi.mock('../api', () => ({
+  docApi: { list: vi.fn(), search: vi.fn(), trashSettings: vi.fn() },
+  folderApi: {}
+}))
 
 describe('document list state', () => {
-  beforeEach(() => setActivePinia(createPinia()))
+  beforeEach(() => { vi.resetAllMocks(); setActivePinia(createPinia()) })
+
+  it.each(['documents', 'recent', 'favorites', 'trash', 'search'])('records a %s load failure without losing cached documents, and can retry', async mode => {
+    const store = useDocStore()
+    store.docs = [{ id: 2, title: '原有文档' }]
+    const request = mode === 'search' ? docApi.search : docApi.list
+    request.mockRejectedValueOnce(new Error('服务器处理失败'))
+    docApi.trashSettings.mockResolvedValue({ data: { retentionDays: 30 } })
+    const load = () => mode === 'documents' ? store.loadDocs(7)
+      : mode === 'trash' ? store.loadTrash()
+        : mode === 'search' ? store.searchDocs('原有') : store.loadScope(mode)
+
+    await expect(load()).rejects.toThrow('服务器处理失败')
+    expect(store.docs).toEqual([{ id: 2, title: '原有文档' }])
+    expect(store.loadError).toBeTruthy()
+    expect(store.loading).toBe(false)
+
+    request.mockResolvedValueOnce({ data: [] })
+    await store.retryLoad()
+    expect(store.loadError).toBe('')
+    expect(store.docs).toEqual([])
+    if (mode === 'search') expect(request).toHaveBeenLastCalledWith('原有')
+    if (mode === 'documents') expect(request).toHaveBeenLastCalledWith({ folderId: 7 })
+  })
 
   it('shows a newly created document immediately in the current folder without duplicates', () => {
     const store = useDocStore()

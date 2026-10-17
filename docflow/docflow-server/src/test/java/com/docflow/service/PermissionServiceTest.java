@@ -115,7 +115,7 @@ class PermissionServiceTest {
         when(docPermissionMapper.selectOne(any())).thenReturn(permission);
         when(documentMapper.selectById(30L)).thenReturn(document);
         when(passwordEncoder.encode("old-password")).thenReturn("$2a$10$upgraded");
-        when(signedFileService.rewriteContent(document.getContent())).thenReturn(document.getContent());
+        when(signedFileService.rewriteContent(document.getContent(), 30L, "share-token")).thenReturn(document.getContent());
 
         assertThat(permissionService.getByShareToken("share-token", "old-password")).isSameAs(document);
         assertThat(permission.getSharePassword()).startsWith("$2a$");
@@ -128,5 +128,38 @@ class PermissionServiceTest {
         document.setOwnerId(ownerId);
         document.setCollabMode("CRDT");
         return document;
+    }
+
+    @Test
+    void expiredCollaboratorCannotReadOrAppearInAccessibleDocuments() {
+        DocPermission permission = new DocPermission();
+        permission.setDocId(30L);
+        permission.setUserId(5L);
+        permission.setPermission("WRITE");
+        permission.setExpireTime(java.time.LocalDateTime.now().minusSeconds(1));
+        when(docPermissionMapper.selectOne(any())).thenReturn(permission);
+        when(docPermissionMapper.selectList(any())).thenReturn(java.util.List.of(permission));
+
+        assertThat(permissionService.canRead(document(30L, 4L), 5L)).isFalse();
+        assertThat(permissionService.listAccessibleDocIds(5L)).isEmpty();
+    }
+
+    @Test
+    void permissionRevocationDisconnectsOnlyAfterTransactionCommit() {
+        var document = document(30L, 4L);
+        var permission = new DocPermission(); permission.setDocId(30L); permission.setUserId(5L);
+        permission.setPermission("WRITE");
+        when(documentMapper.selectById(30L)).thenReturn(document);
+        when(docPermissionMapper.selectOne(any())).thenReturn(permission);
+        org.springframework.transaction.support.TransactionSynchronizationManager.initSynchronization();
+        try {
+            permissionService.updatePermission(30L, 4L, 5L, "READ");
+            verify(crdtCheckpointService, never()).disconnect(30L);
+            org.springframework.transaction.support.TransactionSynchronizationManager.getSynchronizations()
+                    .forEach(org.springframework.transaction.support.TransactionSynchronization::afterCommit);
+            verify(crdtCheckpointService).disconnect(30L);
+        } finally {
+            org.springframework.transaction.support.TransactionSynchronizationManager.clearSynchronization();
+        }
     }
 }

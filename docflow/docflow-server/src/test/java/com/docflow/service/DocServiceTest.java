@@ -2,6 +2,7 @@ package com.docflow.service;
 
 import com.docflow.dto.DocumentCreateRequest;
 import com.docflow.entity.Document;
+import com.docflow.entity.DocumentFavorite;
 import com.docflow.mapper.DocumentMapper;
 import com.docflow.mapper.CrdtDataMapper;
 import com.docflow.mapper.DocPermissionMapper;
@@ -37,6 +38,12 @@ class DocServiceTest {
     @Mock private DocPermissionMapper docPermissionMapper;
     @Mock private DocVersionMapper docVersionMapper;
     @Mock private DocumentFavoriteMapper documentFavoriteMapper;
+    @Mock private FolderService folderService;
+    @Mock private FileAccessService fileAccessService;
+    @Mock private FileService fileService;
+    @Mock private DocumentReferenceService documentReferenceService;
+    @Mock private NotificationService notificationService;
+    @Mock private AttachmentUploadService attachmentUploadService;
 
     @InjectMocks private DocService docService;
 
@@ -63,6 +70,29 @@ class DocServiceTest {
         verify(documentMapper).insert(document.capture());
         assertThat(document.getValue().getOwnerId()).isEqualTo(4L);
         verify(versionService).createSnapshot(created, 4L, "AUTO");
+    }
+
+    @Test
+    void readOnlyCollaboratorCanChangePersonalFavorite() {
+        Document document = new Document();
+        document.setId(21L); document.setOwnerId(4L); document.setCollabMode("CRDT");
+        org.mockito.Mockito.lenient().when(permissionService.requireReadable(21L, 5L)).thenReturn(document);
+        org.mockito.Mockito.lenient().when(permissionService.requireWritable(21L, 5L))
+                .thenThrow(new com.docflow.common.BusinessException(com.docflow.common.ErrorCode.FORBIDDEN));
+        var request = new com.docflow.dto.DocumentUpdateRequest(); request.setFavorite(true);
+        docService.update(21L, 5L, request);
+        verify(documentFavoriteMapper).insert(any(DocumentFavorite.class));
+    }
+
+    @Test
+    void lateMaterializationCannotOverwriteANewerGeneration() {
+        Document current = new Document();
+        current.setId(21L); current.setOwnerId(4L); current.setCollabMode("CRDT");
+        current.setCrdtMaterializedGeneration(20L);
+        when(permissionService.requireDocument(21L)).thenReturn(current);
+        docService.updateCrdtSnapshotFromCollaboration(21L, 4L, "<p>stale</p>", 19L);
+        docService.updateCrdtSnapshotFromCollaboration(21L, 4L, "<p>legacy stale</p>");
+        org.mockito.Mockito.verifyNoInteractions(documentMapper, versionService, htmlSanitizer);
     }
 
     @Test
@@ -109,6 +139,10 @@ class DocServiceTest {
         verify(crdtDataMapper).deleteUpdates(21L);
         verify(crdtDataMapper).deleteCheckpointHistory(21L);
         verify(crdtDataMapper).deleteCheckpoint(21L);
+        verify(crdtDataMapper).deleteMaterialization(21L);
+        verify(documentReferenceService).deleteByDocument(21L);
+        verify(notificationService).deleteByDocument(21L);
+        verify(attachmentUploadService).deleteByDocument(21L);
         verify(documentMapper).deleteById(21L);
     }
 }

@@ -46,6 +46,8 @@ public class AdminService {
     @Autowired private DocumentTemplateMapper templateMapper;
     @Autowired private AccountSecurityService accountSecurityService;
     @Autowired private JdbcTemplate jdbcTemplate;
+    @Autowired private FileAccessService fileAccessService;
+    @Autowired private FileService fileService;
     @Value("${app.trash.retention-days:30}") private int trashRetentionDays;
 
     public Map<String, Object> overview() {
@@ -147,6 +149,7 @@ public class AdminService {
         template.setContent(request.getContent() == null ? "" : request.getContent());
         template.setContentFormat("HTML".equals(request.getContentFormat()) ? "HTML" : "MARKDOWN");
         if (id == null) templateMapper.insert(template); else templateMapper.updateById(template);
+        fileAccessService.associateTemplateReferences(template.getId(), template.getContent(), actorId);
         audit(actorId, id == null ? "ADMIN_TEMPLATE_CREATE" : "ADMIN_TEMPLATE_UPDATE", template.getName());
         return template;
     }
@@ -157,7 +160,10 @@ public class AdminService {
         if (template == null || template.getOwnerId() != null) {
             throw new BusinessException(ErrorCode.NOT_FOUND, "系统模板不存在");
         }
+        List<String> urls = fileAccessService.templateUrls(id);
+        fileAccessService.removeTemplateReferences(id);
         templateMapper.deleteById(id);
+        urls.forEach(fileService::deleteAfterCommit);
         audit(actorId, "ADMIN_TEMPLATE_DELETE", template.getName());
     }
 
@@ -169,7 +175,7 @@ public class AdminService {
         data.put("attachments", attachmentMapper.selectCount(new LambdaQueryWrapper<FileAttachment>()));
         data.put("attachmentBytes", sum("SELECT COALESCE(SUM(file_size),0) FROM file_attachment"));
         data.put("feedbackImages", count("feedback_image"));
-        data.put("crdtUpdates", count("doc_crdt_update"));
+        data.put("crdtUpdates", count("crdt_update"));
         data.put("crdtCheckpoints", count("crdt_checkpoint"));
         data.put("crdtCheckpointHistory", count("crdt_checkpoint_history"));
         return data;
@@ -197,12 +203,16 @@ public class AdminService {
 
     private long count(String table) {
         try { return jdbcTemplate.queryForObject("SELECT COUNT(*) FROM " + table, Long.class); }
-        catch (Exception ignored) { return 0L; }
+        catch (Exception exception) {
+            throw new BusinessException(ErrorCode.SERVICE_UNAVAILABLE, "System statistics are temporarily unavailable");
+        }
     }
 
     private long sum(String sql) {
         try { return jdbcTemplate.queryForObject(sql, Long.class); }
-        catch (Exception ignored) { return 0L; }
+        catch (Exception exception) {
+            throw new BusinessException(ErrorCode.SERVICE_UNAVAILABLE, "System statistics are temporarily unavailable");
+        }
     }
 
     public record AdminUserView(Long id, String username, String nickname, String email, String avatar,

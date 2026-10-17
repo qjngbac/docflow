@@ -37,7 +37,7 @@ public class AccountSecurityService {
     @Autowired private PasswordEncoder passwordEncoder;
     @Autowired private VerificationMailService verificationMailService;
     @Autowired private VerificationCodeStore verificationCodeStore;
-    @Value("${app.verification.debug-code:true}") private boolean debugCode;
+    @Value("${app.verification.debug-code:false}") private boolean debugCode;
     @Value("${app.verification.expire-minutes:10}") private int expireMinutes;
     @Value("${app.verification.cooldown-seconds:60}") private int cooldownSeconds;
     @Value("${app.verification.daily-target-limit:10}") private int dailyTargetLimit;

@@ -11,6 +11,7 @@ fail() {
 [[ -n "${BACKUP_DIR}" && -d "${BACKUP_DIR}" ]] || fail "usage: verify-backup.sh <backup-directory>"
 [[ -f "${BACKUP_DIR}/SHA256SUMS" ]] || fail "SHA256SUMS is missing"
 [[ -f "${BACKUP_DIR}/mysql.sql.gz" ]] || fail "mysql.sql.gz is missing"
+[[ -f "${BACKUP_DIR}/uploads.tar.gz" ]] || fail "uploads.tar.gz is missing; backup is incomplete"
 
 (
   cd "${BACKUP_DIR}"

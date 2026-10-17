@@ -35,6 +35,7 @@ public class AttachmentUploadService {
     private final PermissionService permissionService;
     private final FileService fileService;
     @Value("${file.upload-dir:./uploads}") private String uploadDir;
+    @org.springframework.beans.factory.annotation.Autowired private FileAccessService fileAccessService;
 
     public AttachmentUploadService(AttachmentUploadSessionMapper sessionMapper, FileAttachmentMapper attachmentMapper,
                                    PermissionService permissionService, FileService fileService) {
@@ -46,6 +47,12 @@ public class AttachmentUploadService {
     public AttachmentUploadSession start(Long docId, Long userId, AttachmentUploadInitRequest request) {
         permissionService.requireWritable(docId, userId);
         fileService.validateAttachmentName(request.getFileName());
+        if (request.getSize() == null || request.getTotalChunks() == null || request.getSize() < 1
+                || request.getSize() > 512L * 1024 * 1024 || request.getTotalChunks() < 1
+                || request.getTotalChunks() > 4096 || request.getTotalChunks() > request.getSize()
+                || request.getSize() > request.getTotalChunks() * MAX_CHUNK_BYTES) {
+            throw new BusinessException(ErrorCode.BAD_REQUEST, "Invalid upload size or chunk layout");
+        }
         AttachmentUploadSession session = new AttachmentUploadSession();
         session.setId(UUID.randomUUID().toString()); session.setDocId(docId); session.setUserId(userId);
         session.setOriginalName(request.getFileName().trim()); session.setMimeType(request.getMimeType());
@@ -65,6 +72,15 @@ public class AttachmentUploadService {
         Path target = sessionDirectory(session).resolve(chunkIndex + ".part");
         try {
             Files.createDirectories(target.getParent());
+            long storedBytes = 0;
+            try (var paths = Files.list(target.getParent())) {
+                for (Path existing : paths.filter(path -> path.getFileName().toString().endsWith(".part")).toList()) {
+                    if (!existing.equals(target)) storedBytes += Files.size(existing);
+                }
+            }
+            if (chunk.getSize() > session.getTotalSize() - storedBytes) {
+                throw new BusinessException(ErrorCode.PAYLOAD_TOO_LARGE, "Chunks exceed the declared file size");
+            }
             boolean existed = Files.isRegularFile(target);
             chunk.transferTo(target);
             if (!existed) session.setReceivedChunks(countChunks(session));
@@ -89,7 +105,12 @@ public class AttachmentUploadService {
                     Path chunk = sessionDirectory(session).resolve(index + ".part");
                     try (InputStream input = Files.newInputStream(chunk)) {
                         byte[] buffer = new byte[8192]; int read;
-                        while ((read = input.read(buffer)) != -1) { output.write(buffer, 0, read); digest.update(buffer, 0, read); total += read; }
+                        while ((read = input.read(buffer)) != -1) {
+                            if (read > session.getTotalSize() - total) {
+                                throw new BusinessException(ErrorCode.PAYLOAD_TOO_LARGE, "Chunks exceed the declared file size");
+                            }
+                            output.write(buffer, 0, read); digest.update(buffer, 0, read); total += read;
+                        }
                     }
                 }
             }
@@ -101,7 +122,9 @@ public class AttachmentUploadService {
             FileAttachment attachment = new FileAttachment();
             attachment.setDocId(docId); attachment.setUploaderId(userId); attachment.setOriginalName(session.getOriginalName());
             attachment.setFileUrl(url); attachment.setFileSize(total); attachment.setMimeType(session.getMimeType()); attachmentMapper.insert(attachment);
-            session.setStatus("COMPLETE"); session.setUpdatedAt(LocalDateTime.now()); sessionMapper.updateById(session); deleteDirectory(sessionDirectory(session));
+            fileAccessService.associateDocumentReferences(docId, null, url, userId);
+            session.setStatus("COMPLETE"); session.setUpdatedAt(LocalDateTime.now()); sessionMapper.updateById(session);
+            deleteDirectoryAfterCommit(sessionDirectory(session));
             return attachment;
         } catch (BusinessException exception) { throw exception;
         } catch (Exception exception) { throw new BusinessException(ErrorCode.INTERNAL_ERROR, "Upload assembly failed"); }
@@ -117,12 +140,27 @@ public class AttachmentUploadService {
 
     private AttachmentUploadSession requireSession(Long docId, String id, Long userId) {
         permissionService.requireWritable(docId, userId);
-        AttachmentUploadSession session = sessionMapper.selectById(id);
+        AttachmentUploadSession session = sessionMapper.lockById(id);
         if (session == null || !docId.equals(session.getDocId()) || !userId.equals(session.getUserId())) throw new BusinessException(ErrorCode.NOT_FOUND, "Upload session not found");
         if (!"UPLOADING".equals(session.getStatus()) || session.getExpiresAt().isBefore(LocalDateTime.now())) throw new BusinessException(ErrorCode.CONFLICT, "Upload session has expired");
         return session;
     }
     private Path sessionDirectory(AttachmentUploadSession session) { return Path.of(uploadDir).toAbsolutePath().normalize().resolve(".chunks").resolve(session.getId()); }
+    public void deleteByDocument(Long docId) {
+        var sessions = sessionMapper.selectList(new LambdaQueryWrapper<AttachmentUploadSession>()
+                .eq(AttachmentUploadSession::getDocId, docId));
+        sessionMapper.delete(new LambdaQueryWrapper<AttachmentUploadSession>().eq(AttachmentUploadSession::getDocId, docId));
+        sessions.forEach(session -> deleteDirectoryAfterCommit(sessionDirectory(session)));
+    }
+
+    private void deleteDirectoryAfterCommit(Path directory) {
+        if (org.springframework.transaction.support.TransactionSynchronizationManager.isSynchronizationActive()) {
+            org.springframework.transaction.support.TransactionSynchronizationManager.registerSynchronization(
+                    new org.springframework.transaction.support.TransactionSynchronization() {
+                        @Override public void afterCommit() { deleteDirectory(directory); }
+                    });
+        } else { deleteDirectory(directory); }
+    }
     private int countChunks(AttachmentUploadSession session) { try (var paths = Files.list(sessionDirectory(session))) { return (int) paths.filter(path -> path.getFileName().toString().endsWith(".part")).count(); } catch (IOException ignored) { return 0; } }
     private void deleteDirectory(Path directory) { try { if (!Files.exists(directory)) return; try (var paths = Files.walk(directory)) { paths.sorted(Comparator.reverseOrder()).forEach(path -> { try { Files.deleteIfExists(path); } catch (IOException ignored) {} }); } } catch (IOException ignored) {} }
 }

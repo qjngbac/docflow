@@ -48,6 +48,27 @@
         </button>
       </form>
     </section>
+        <footer class="site-records">
+      <a
+        href="https://beian.miit.gov.cn/"
+        rel="noreferrer"
+        target="_blank"
+      >
+        滇ICP备2026017542号-1
+      </a>
+
+      <span class="record-separator">|</span>
+
+      <a
+        class="police-record"
+        href="https://beian.mps.gov.cn/#/query/webSearch?code=53011402000845"
+        rel="noreferrer"
+        target="_blank"
+      >
+        <img src="/beian.png" alt="" />
+        <span>滇公网安备53011402000845号</span>
+      </a>
+    </footer>
     <div v-if="resetOpen" class="modal-backdrop" @click.self="resetOpen = false"><form class="modal reset-modal" @submit.prevent="confirmReset"><header><h2>找回密码</h2><button class="btn btn-icon btn-ghost" type="button" @click="resetOpen = false"><X :size="18" /></button></header><label>注册邮箱<input v-model.trim="reset.email" class="input" type="email" required /></label><div class="reset-code"><input v-model.trim="reset.code" class="input" placeholder="验证码" maxlength="6" required /><button class="btn btn-secondary" type="button" @click="requestResetCode">获取验证码</button></div><p v-if="reset.debugCode">本地开发验证码：<strong>{{ reset.debugCode }}</strong></p><label>新密码<input v-model="reset.newPassword" class="input" type="password" minlength="8" maxlength="72" required /></label><footer><button class="btn btn-secondary" type="button" @click="resetOpen = false">取消</button><button class="btn btn-primary" type="submit">重置密码</button></footer></form></div>
   </main>
 </template>
@@ -123,8 +144,12 @@ async function confirmReset() { try { await userApi.confirmPasswordReset({ email
 <style scoped>
 .login-page {
   min-height: 100vh;
+  box-sizing: border-box;
   display: grid;
-  place-items: center;
+  grid-template-rows: 1fr auto;
+  justify-items: center;
+  align-items: center;
+  gap: 18px;
   padding: 24px;
   background: #071431 url('/imgs/login-bg.jpg') center / cover no-repeat;
 }
@@ -154,5 +179,43 @@ async function confirmReset() { try { await userApi.confirmPasswordReset({ email
 .captcha-group{display:grid;gap:6px;margin:0 0 14px}.captcha-group>label{font-size:13px;font-weight:600}.captcha-group>small{color:var(--text-muted);font-size:11px}.captcha-row{display:grid;grid-template-columns:minmax(0,1fr) 126px;gap:8px}.captcha-image{height:42px;overflow:hidden;border:1px solid var(--border);border-radius:6px;background:#eef4ff;cursor:pointer}.captcha-image img{display:block;width:100%;height:100%;object-fit:cover}
 .spin { animation: spin 1s linear infinite; }
 @keyframes spin { to { transform: rotate(360deg); } }
+.site-records {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-wrap: wrap;
+  gap: 8px;
+  width: 100%;
+  padding-bottom: 6px;
+  color: rgba(255, 255, 255, 0.85);
+  font-size: 13px;
+  line-height: 22px;
+}
+
+.site-records a {
+  color: inherit;
+  text-decoration: none;
+}
+
+.site-records a:hover {
+  color: #fff;
+  text-decoration: underline;
+}
+
+.police-record {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+}
+
+.police-record img {
+  width: 18px;
+  height: 18px;
+  object-fit: contain;
+}
+
+.record-separator {
+  opacity: 0.55;
+}
 @media (max-width: 480px) { .login-page { padding: 14px; } .login-panel { padding: 26px 20px; } }
 </style>

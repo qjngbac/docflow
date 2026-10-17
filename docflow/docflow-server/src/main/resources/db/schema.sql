@@ -1,4 +1,4 @@
-﻿CREATE DATABASE IF NOT EXISTS `docflow` DEFAULT CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci;
+CREATE DATABASE IF NOT EXISTS `docflow` DEFAULT CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci;
 
 USE `docflow`;
 
@@ -61,6 +61,7 @@ CREATE TABLE IF NOT EXISTS `document` (
     `collab_mode` ENUM('LEGACY','CRDT') NOT NULL DEFAULT 'CRDT' COMMENT 'collaboration mode',
     `revision` BIGINT NOT NULL DEFAULT 0 COMMENT 'current content revision',
     `persisted_revision` BIGINT NOT NULL DEFAULT 0 COMMENT 'persisted content revision',
+    `crdt_materialized_generation` BIGINT NOT NULL DEFAULT 0,
     `content_hash` VARCHAR(64) DEFAULT NULL COMMENT 'SHA-256 content hash',
     `last_persisted_at` DATETIME(3) DEFAULT NULL COMMENT 'last persistence time',
     `created_at` DATETIME DEFAULT CURRENT_TIMESTAMP,
@@ -323,3 +324,53 @@ WHERE NOT EXISTS (SELECT 1 FROM `document_template` WHERE `owner_id` IS NULL AND
 INSERT INTO `document_template` (`owner_id`, `name`, `description`, `category`, `content`, `content_format`)
 SELECT NULL, '项目计划', '整理目标、里程碑和风险', '项目', '# 项目计划\n\n## 项目目标\n\n## 里程碑\n\n## 任务分工\n\n## 风险与对策\n', 'MARKDOWN'
 WHERE NOT EXISTS (SELECT 1 FROM `document_template` WHERE `owner_id` IS NULL AND `name` = '项目计划');
+
+-- File authorization and durable collaboration outbox (fresh database bootstrap).
+-- Existing physical paths and URLs remain unchanged. Only registry-backed files are served.
+CREATE TABLE IF NOT EXISTS stored_file (
+    file_url VARCHAR(512) CHARACTER SET ascii COLLATE ascii_bin NOT NULL,
+    owner_id BIGINT DEFAULT NULL,
+    file_kind ENUM('DOCUMENT','AVATAR','FEEDBACK') NOT NULL,
+    created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    PRIMARY KEY (file_url)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+CREATE TABLE IF NOT EXISTS stored_file_scope (
+    file_url VARCHAR(512) CHARACTER SET ascii COLLATE ascii_bin NOT NULL,
+    scope_type ENUM('DOCUMENT','TEMPLATE') NOT NULL,
+    scope_id BIGINT NOT NULL,
+    PRIMARY KEY (file_url, scope_type, scope_id),
+    KEY idx_file_scope (scope_type, scope_id),
+    CONSTRAINT fk_file_scope_file FOREIGN KEY (file_url) REFERENCES stored_file(file_url)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+-- Feedback has the strongest privacy category if inconsistent old records overlap.
+INSERT IGNORE INTO stored_file(file_url, owner_id, file_kind)
+SELECT file_url, user_id, 'FEEDBACK' FROM feedback_image
+WHERE LENGTH(file_url)<=512 AND file_url REGEXP '^/files/[A-Za-z0-9_][A-Za-z0-9_./-]*$'
+  AND file_url NOT REGEXP '/[.][.]?(/|$)' AND file_url NOT LIKE '%//%' AND file_url NOT LIKE '%/';
+
+INSERT IGNORE INTO stored_file(file_url, owner_id, file_kind)
+SELECT file_url, uploader_id, 'DOCUMENT' FROM file_attachment
+WHERE LENGTH(file_url)<=512 AND file_url REGEXP '^/files/[A-Za-z0-9_][A-Za-z0-9_./-]*$'
+  AND file_url NOT REGEXP '/[.][.]?(/|$)' AND file_url NOT LIKE '%//%' AND file_url NOT LIKE '%/';
+
+INSERT IGNORE INTO stored_file_scope(file_url, scope_type, scope_id)
+SELECT a.file_url, 'DOCUMENT', a.doc_id FROM file_attachment a
+JOIN stored_file f ON f.file_url=a.file_url AND f.file_kind='DOCUMENT';
+
+INSERT IGNORE INTO stored_file(file_url, owner_id, file_kind)
+SELECT avatar, id, 'AVATAR' FROM `user`
+WHERE LENGTH(avatar)<=512 AND avatar REGEXP '^/files/[A-Za-z0-9_][A-Za-z0-9_./-]*$'
+  AND avatar NOT REGEXP '/[.][.]?(/|$)' AND avatar NOT LIKE '%//%' AND avatar NOT LIKE '%/';
+
+-- Generic historical image provenance was never recorded. V5 performs a single snapshot
+-- backfill of document/version/template references; see its explicit trust limitation.
+
+CREATE TABLE IF NOT EXISTS crdt_materialization (
+    doc_id BIGINT NOT NULL PRIMARY KEY,
+    generation BIGINT NOT NULL AUTO_INCREMENT UNIQUE,
+    editor_user_id BIGINT NULL,
+    payload LONGBLOB NOT NULL,
+    updated_at DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3) ON UPDATE CURRENT_TIMESTAMP(3)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='Durable pending CRDT HTML materialization';

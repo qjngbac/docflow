@@ -65,11 +65,7 @@ public class LoginProtectionService {
         String id = UUID.randomUUID().toString();
         String binding = digest(normalizeUsername(username)) + ":" + digest(normalizeIp(ip)) + ":" + digest(answer);
         state.put(captchaKey(id), binding, captchaDuration);
-        String svg = "<svg xmlns='http://www.w3.org/2000/svg' width='160' height='48' viewBox='0 0 160 48'>"
-                + "<rect width='160' height='48' rx='4' fill='#eef4ff'/><path d='M8 35L152 12M15 10L145 38' stroke='#9db8e8' stroke-width='1'/>"
-                + "<text x='80' y='32' text-anchor='middle' font-family='Consolas,monospace' font-size='25' font-weight='700' letter-spacing='5' fill='#17335f'>"
-                + answer + "</text></svg>";
-        String image = "data:image/svg+xml;base64," + Base64.getEncoder().encodeToString(svg.getBytes(StandardCharsets.UTF_8));
+        String image = renderCaptcha(answer);
         return new CaptchaChallenge(id, image, captchaDuration.toSeconds());
     }
 
@@ -109,10 +105,33 @@ public class LoginProtectionService {
         state.delete(accountLockKey(account));
     }
 
-    private String randomCaptcha() {
+    String randomCaptcha() {
         StringBuilder value = new StringBuilder(5);
         for (int index = 0; index < 5; index++) value.append(CAPTCHA_CHARS[RANDOM.nextInt(CAPTCHA_CHARS.length)]);
         return value.toString();
+    }
+
+    private String renderCaptcha(String answer) {
+        var image = new java.awt.image.BufferedImage(160, 48, java.awt.image.BufferedImage.TYPE_INT_RGB);
+        var graphics = image.createGraphics();
+        try {
+            graphics.setColor(new java.awt.Color(238, 244, 255));
+            graphics.fillRect(0, 0, 160, 48);
+            graphics.setColor(new java.awt.Color(157, 184, 232));
+            for (int line = 0; line < 6; line++) {
+                graphics.drawLine(RANDOM.nextInt(160), RANDOM.nextInt(48), RANDOM.nextInt(160), RANDOM.nextInt(48));
+            }
+            graphics.setFont(new java.awt.Font(java.awt.Font.MONOSPACED, java.awt.Font.BOLD, 26));
+            graphics.setColor(new java.awt.Color(23, 51, 95));
+            for (int index = 0; index < answer.length(); index++) {
+                graphics.drawString(answer.substring(index, index + 1), 12 + index * 28, 32 + RANDOM.nextInt(5));
+            }
+            var output = new java.io.ByteArrayOutputStream();
+            javax.imageio.ImageIO.write(image, "png", output);
+            return "data:image/png;base64," + Base64.getEncoder().encodeToString(output.toByteArray());
+        } catch (java.io.IOException exception) {
+            throw new IllegalStateException("Unable to render login challenge", exception);
+        } finally { graphics.dispose(); }
     }
 
     private String normalizeUsername(String value) {

@@ -187,8 +187,8 @@ public class PermissionService {
             }
         }
         Document document = requireDocument(permission.getDocId());
-        document.setContent(signedFileService.rewriteContent(document.getContent()));
-        document.setCoverImage(signedFileService.sign(document.getCoverImage()));
+        document.setContent(signedFileService.rewriteContent(document.getContent(), document.getId(), token));
+        document.setCoverImage(signedFileService.sign(document.getCoverImage(), document.getId(), token));
         return document;
     }
 
@@ -217,7 +217,7 @@ public class PermissionService {
             existing.setPermission(permission);
             docPermissionMapper.updateById(existing);
             if (!permission.equals(oldPermission)) {
-                crdtCheckpointService.disconnect(docId);
+                disconnectAfterCommit(docId);
                 audit(operatorId, docId, "PERMISSION_COLLABORATOR_UPDATE", user.getId(), oldPermission, permission);
             }
             return existing;
@@ -263,7 +263,7 @@ public class PermissionService {
         if (newPermission.equals(oldPermission)) return;
         collaborator.setPermission(newPermission);
         docPermissionMapper.updateById(collaborator);
-        crdtCheckpointService.disconnect(docId);
+        disconnectAfterCommit(docId);
         audit(operatorId, docId, "PERMISSION_COLLABORATOR_UPDATE", collaboratorUserId,
                 oldPermission, newPermission);
     }
@@ -273,7 +273,7 @@ public class PermissionService {
         requireAdmin(docId, operatorId);
         DocPermission collaborator = requireCollaborator(docId, collaboratorUserId);
         docPermissionMapper.deleteById(collaborator.getId());
-        crdtCheckpointService.disconnect(docId);
+        disconnectAfterCommit(docId);
         audit(operatorId, docId, "PERMISSION_COLLABORATOR_REMOVE", collaboratorUserId,
                 collaborator.getPermission(), null);
     }
@@ -283,8 +283,11 @@ public class PermissionService {
             return List.of();
         }
         return docPermissionMapper.selectList(new LambdaQueryWrapper<DocPermission>()
-                        .eq(DocPermission::getUserId, userId))
+                        .eq(DocPermission::getUserId, userId)
+                        .and(w -> w.isNull(DocPermission::getExpireTime)
+                                .or().gt(DocPermission::getExpireTime, LocalDateTime.now())))
                 .stream()
+                .filter(this::isActive)
                 .map(DocPermission::getDocId)
                 .distinct()
                 .toList();
@@ -302,10 +305,35 @@ public class PermissionService {
         if (userId == null) {
             return null;
         }
-        return docPermissionMapper.selectOne(new LambdaQueryWrapper<DocPermission>()
+        DocPermission permission = docPermissionMapper.selectOne(new LambdaQueryWrapper<DocPermission>()
                 .eq(DocPermission::getDocId, docId)
                 .eq(DocPermission::getUserId, userId)
+                .and(w -> w.isNull(DocPermission::getExpireTime)
+                        .or().gt(DocPermission::getExpireTime, LocalDateTime.now()))
                 .last("LIMIT 1"));
+        return isActive(permission) ? permission : null;
+    }
+
+    private boolean isActive(DocPermission permission) {
+        return permission != null && (permission.getExpireTime() == null
+                || permission.getExpireTime().isAfter(LocalDateTime.now()));
+    }
+
+    private void disconnectAfterCommit(Long docId) {
+        if (org.springframework.transaction.support.TransactionSynchronizationManager.isSynchronizationActive()) {
+            org.springframework.transaction.support.TransactionSynchronizationManager.registerSynchronization(
+                    new org.springframework.transaction.support.TransactionSynchronization() {
+                        @Override public void afterCommit() {
+                            try { crdtCheckpointService.disconnect(docId); }
+                            catch (RuntimeException exception) {
+                                org.slf4j.LoggerFactory.getLogger(PermissionService.class)
+                                        .warn("Permission committed; immediate disconnect failed for document {}", docId, exception);
+                            }
+                        }
+                    });
+        } else {
+            crdtCheckpointService.disconnect(docId);
+        }
     }
 
     private String normalizePermission(String permission) {

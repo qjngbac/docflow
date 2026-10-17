@@ -48,6 +48,7 @@ cleanup() {
 }
 trap cleanup EXIT
 mkdir -p "${WORK_DIR}"
+[[ -d "${UPLOAD_DIR}" ]] || fail "upload directory does not exist: ${UPLOAD_DIR}"
 
 mysqldump \
   --defaults-extra-file="${MYSQL_DEFAULTS_FILE}" \
@@ -62,11 +63,7 @@ mysqldump \
   --default-character-set=utf8mb4 \
   "${DB_NAME}" | gzip -9 >"${WORK_DIR}/mysql.sql.gz"
 
-if [[ -d "${UPLOAD_DIR}" ]]; then
-  tar -C "${UPLOAD_DIR}" -czf "${WORK_DIR}/uploads.tar.gz" .
-else
-  printf 'Upload directory did not exist at backup time: %s\n' "${UPLOAD_DIR}" >"${WORK_DIR}/uploads-missing.txt"
-fi
+tar -C "${UPLOAD_DIR}" -czf "${WORK_DIR}/uploads.tar.gz" .
 
 cat >"${WORK_DIR}/metadata.env" <<EOF
 BACKUP_FORMAT_VERSION=1
@@ -78,13 +75,11 @@ EOF
 
 (
   cd "${WORK_DIR}"
-  checksum_files=(mysql.sql.gz metadata.env)
-  [[ -f uploads.tar.gz ]] && checksum_files+=(uploads.tar.gz)
-  [[ -f uploads-missing.txt ]] && checksum_files+=(uploads-missing.txt)
+  checksum_files=(mysql.sql.gz metadata.env uploads.tar.gz)
   sha256sum "${checksum_files[@]}" >SHA256SUMS
   sha256sum -c SHA256SUMS
   gzip -t mysql.sql.gz
-  if [[ -f uploads.tar.gz ]]; then tar -tzf uploads.tar.gz >/dev/null; fi
+  tar -tzf uploads.tar.gz >/dev/null
 )
 
 mv -- "${WORK_DIR}" "${FINAL_DIR}"

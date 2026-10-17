@@ -62,6 +62,7 @@ public class Document {
     private Long revision;
 
     private Long persistedRevision;
+    private Long crdtMaterializedGeneration;
 
     private String contentHash;
 

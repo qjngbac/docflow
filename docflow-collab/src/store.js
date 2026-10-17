@@ -1,7 +1,9 @@
 import mysql from 'mysql2/promise'
+import * as Y from 'yjs'
 import { encodeCheckpoint, PROTOCOL_VERSION, restoreDocument, updateId } from './crdt-state.js'
+import { replaceDocumentContent } from './initial-document.js'
 
-// 协作服务直接持久化不透明 Yjs 二进制，不解析正文业务字段。
+// 协作服务持久化 Yjs 二进制；历史恢复只替换约定的编辑器正文片段。
 export function createPool() {
   return mysql.createPool({
     host: process.env.DB_HOST || '127.0.0.1',
@@ -24,17 +26,39 @@ export class CrdtStore {
     await this.pool.execute('SELECT 1 FROM crdt_checkpoint LIMIT 1')
     await this.pool.execute('SELECT 1 FROM crdt_update LIMIT 1')
     await this.pool.execute('SELECT 1 FROM crdt_checkpoint_history LIMIT 1')
+    try {
+      await this.pool.execute('SELECT 1 FROM crdt_materialization LIMIT 1')
+    } catch (error) {
+      if (error.code !== 'ER_NO_SUCH_TABLE' && error.errno !== 1146) throw error
+      // 旧库可能未开启 Java Flyway；仅补建本服务的新队列表，不重建协同数据。
+      // 与 V4 的 CREATE TABLE IF NOT EXISTS 兼容，后端升级仍由 Flyway 管理。
+      try {
+        await this.pool.execute(`CREATE TABLE IF NOT EXISTS crdt_materialization (
+          doc_id BIGINT NOT NULL PRIMARY KEY,
+          generation BIGINT NOT NULL AUTO_INCREMENT UNIQUE,
+          editor_user_id BIGINT NULL,
+          payload LONGBLOB NOT NULL,
+          updated_at DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3) ON UPDATE CURRENT_TIMESTAMP(3)
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='Durable pending CRDT HTML materialization'`)
+      } catch (cause) {
+        throw new Error('初始化 crdt_materialization 失败，请检查数据库连接与 CREATE 权限，或先执行后端 Flyway V4 迁移', { cause })
+      }
+      await this.pool.execute('SELECT 1 FROM crdt_materialization LIMIT 1')
+    }
   }
 
   async appendUpdate(documentId, payload, clientId) {
     // update_id 具有内容幂等性；INSERT IGNORE 让重复消息不会生成第二条增量。
     const id = updateId(documentId, payload)
-    await this.pool.execute(
-      `INSERT IGNORE INTO crdt_update
-       (doc_id, protocol_version, client_id, update_id, payload)
-       VALUES (?, ?, ?, ?, ?)`,
-      [documentId, PROTOCOL_VERSION, clientId || null, id, Buffer.from(payload)]
-    )
+    await this.withDocumentLock(documentId, async (connection, checkpoint) => {
+      if (!checkpoint) throw new Error('CRDT document state does not exist')
+      await connection.execute(
+        `INSERT IGNORE INTO crdt_update
+         (doc_id, protocol_version, client_id, update_id, payload)
+         VALUES (?, ?, ?, ?, ?)`,
+        [documentId, PROTOCOL_VERSION, clientId || null, id, Buffer.from(payload)]
+      )
+    })
     return id
   }
 
@@ -53,14 +77,33 @@ export class CrdtStore {
   }
 
   async loadWithMetadata(documentId) {
+    return this.withDocumentLock(documentId, (connection, checkpoint) => this.readState(connection, documentId, checkpoint))
+  }
+
+  async withDocumentLock(documentId, action) {
+    const connection = await this.pool.getConnection()
+    try {
+      await connection.beginTransaction()
+      // 所有增量写入、读取、压缩与回滚都先锁同一文档行，防止跨节点覆盖。
+      const [rows] = await connection.execute(
+        'SELECT protocol_version, checkpoint_seq, payload FROM crdt_checkpoint WHERE doc_id = ? FOR UPDATE', [documentId]
+      )
+      const result = await action(connection, rows[0])
+      await connection.commit()
+      return result
+    } catch (error) {
+      await connection.rollback()
+      throw error
+    } finally {
+      connection.release()
+    }
+  }
+
+  async readState(connection, documentId, checkpoint) {
     // 恢复顺序固定为最近 checkpoint，再按自增 ID 应用其后的全部增量。
-    const [checkpointRows] = await this.pool.execute(
-      'SELECT checkpoint_seq, payload FROM crdt_checkpoint WHERE doc_id = ?', [documentId]
-    )
-    const checkpoint = checkpointRows[0]
     const sequence = checkpoint?.checkpoint_seq || 0
-    const [updates] = await this.pool.execute(
-      'SELECT id, payload FROM crdt_update WHERE doc_id = ? AND id > ? ORDER BY id ASC',
+    const [updates] = await connection.execute(
+      'SELECT id, payload FROM crdt_update WHERE doc_id = ? AND id > ? ORDER BY id ASC FOR UPDATE',
       [documentId, sequence]
     )
     if (!checkpoint && updates.length === 0) return null
@@ -72,46 +115,78 @@ export class CrdtStore {
     }
   }
 
-  async checkpoint(documentId, document, sequenceOverride = null, reason = 'AUTO') {
+  async checkpoint(documentId, document, sequenceOverride = null, reason = 'AUTO', editorUserId = null, replacement = null) {
     // checkpoint、历史留档和已合并增量删除必须处于同一事务中。
-    const connection = await this.pool.getConnection()
-    try {
-      const [rows] = await connection.execute(
-        'SELECT COALESCE(MAX(id), 0) AS high_water FROM crdt_update WHERE doc_id = ?',
-        [documentId]
-      )
-      const highWater = sequenceOverride == null ? Number(rows[0].high_water || 0) : Number(sequenceOverride)
-      const payload = Buffer.from(encodeCheckpoint(document))
-      await connection.beginTransaction()
-      const [existingRows] = await connection.execute(
-        'SELECT protocol_version, checkpoint_seq, payload FROM crdt_checkpoint WHERE doc_id = ? FOR UPDATE',
-        [documentId]
-      )
-      const existing = existingRows[0]
-      if (existing?.payload?.length) {
+    return this.withDocumentLock(documentId, async (connection, existing) => {
+      const loaded = await this.readState(connection, documentId, existing)
+      if (!loaded && !replacement) throw new Error('CRDT document state does not exist')
+      const merged = loaded?.document || new Y.Doc()
+      try {
+        // 本节点可能尚未收到其他节点已持久化的更新；必须合并后才能删除增量。
+        if (document) Y.applyUpdate(merged, encodeCheckpoint(document))
+        if (replacement) replaceDocumentContent(merged, replacement)
+        // 外部传入的旧序号不能覆盖事务内读取的最新高水位。
+        const highWater = loaded?.updateHighWater || 0
+        const payload = Buffer.from(encodeCheckpoint(merged))
+        if (existing?.payload?.length) {
+          await connection.execute(
+            `INSERT INTO crdt_checkpoint_history (doc_id, protocol_version, checkpoint_seq, payload, reason)
+             VALUES (?, ?, ?, ?, ?)`,
+            [documentId, existing.protocol_version, existing.checkpoint_seq, existing.payload, reason]
+          )
+        }
         await connection.execute(
-          `INSERT INTO crdt_checkpoint_history (doc_id, protocol_version, checkpoint_seq, payload, reason)
-           VALUES (?, ?, ?, ?, ?)`,
-          [documentId, existing.protocol_version, existing.checkpoint_seq, existing.payload, reason]
+          `INSERT INTO crdt_checkpoint (doc_id, protocol_version, checkpoint_seq, payload)
+           VALUES (?, ?, ?, ?)
+           ON DUPLICATE KEY UPDATE protocol_version = VALUES(protocol_version),
+             checkpoint_seq = VALUES(checkpoint_seq), payload = VALUES(payload), updated_at = CURRENT_TIMESTAMP(3)`,
+          [documentId, PROTOCOL_VERSION, highWater, payload]
         )
+        await connection.execute(
+          'DELETE FROM crdt_update WHERE doc_id = ? AND id <= ?', [documentId, highWater]
+        )
+        await this.queueMaterialization(connection, documentId, payload, editorUserId)
+        await this.trimHistory(connection, documentId)
+        return payload
+      } finally {
+        merged.destroy()
       }
-      await connection.execute(
-        `INSERT INTO crdt_checkpoint (doc_id, protocol_version, checkpoint_seq, payload)
-         VALUES (?, ?, ?, ?)
-         ON DUPLICATE KEY UPDATE protocol_version = VALUES(protocol_version),
-           checkpoint_seq = VALUES(checkpoint_seq), payload = VALUES(payload), updated_at = CURRENT_TIMESTAMP(3)`,
-        [documentId, PROTOCOL_VERSION, highWater, payload]
-      )
-      await connection.execute(
-        'DELETE FROM crdt_update WHERE doc_id = ? AND id <= ?', [documentId, highWater]
-      )
-      await this.trimHistory(connection, documentId)
-      await connection.commit()
-    } catch (error) {
-      await connection.rollback()
-      throw error
-    } finally {
-      connection.release()
+    })
+  }
+
+  async queueMaterialization(connection, documentId, payload, editorUserId = null) {
+    await connection.execute(
+      `INSERT INTO crdt_materialization (doc_id, payload, editor_user_id) VALUES (?, ?, ?)
+       ON DUPLICATE KEY UPDATE payload = VALUES(payload), editor_user_id = COALESCE(VALUES(editor_user_id), editor_user_id),
+         generation = VALUES(generation), updated_at = CURRENT_TIMESTAMP(3)`,
+      [documentId, payload, editorUserId]
+    )
+  }
+
+  async materializePending(deliver) {
+    const [pending] = await this.pool.execute('SELECT doc_id FROM crdt_materialization ORDER BY updated_at LIMIT 100')
+    for (const row of pending) {
+      const connection = await this.pool.getConnection()
+      const lockName = `docflow-materialization-${row.doc_id}`
+      let acquired = false
+      try {
+        // 只序列化回写工作器；HTTP 期间不持有行锁，避免与 Java 文档事务互相等待。
+        const [locks] = await connection.execute('SELECT GET_LOCK(?, 0) AS acquired', [lockName])
+        acquired = Number(locks[0]?.acquired) === 1
+        if (!acquired) continue
+        const [rows] = await connection.execute('SELECT payload, editor_user_id, generation FROM crdt_materialization WHERE doc_id = ?', [row.doc_id])
+        if (rows[0]) {
+          await deliver(String(row.doc_id), rows[0].payload, rows[0].editor_user_id, rows[0].generation)
+          // 只确认已发送的世代；HTTP 期间新入队的快照必须保留。
+          await connection.execute('DELETE FROM crdt_materialization WHERE doc_id = ? AND generation = ?', [row.doc_id, rows[0].generation])
+        }
+      } catch (error) {
+        console.warn(`Materialized snapshot retry failed for document ${row.doc_id}`)
+      } finally {
+        try {
+          if (acquired) await connection.execute('SELECT RELEASE_LOCK(?) AS released', [lockName])
+        } finally { connection.release() }
+      }
     }
   }
 
@@ -156,11 +231,9 @@ export class CrdtStore {
     }))
   }
 
-  async restoreCheckpoint(documentId, historyId) {
+  async restoreCheckpoint(documentId, historyId, document = null) {
     // 回滚前先保存当前 checkpoint，保留一次反向恢复的机会。
-    const connection = await this.pool.getConnection()
-    try {
-      await connection.beginTransaction()
+    await this.withDocumentLock(documentId, async (connection, current) => {
       const [historyRows] = await connection.execute(
         `SELECT protocol_version, checkpoint_seq, payload
            FROM crdt_checkpoint_history WHERE id = ? AND doc_id = ? FOR UPDATE`,
@@ -168,35 +241,35 @@ export class CrdtStore {
       )
       const selected = historyRows[0]
       if (!selected) throw new Error('Checkpoint history entry does not exist')
-      const [currentRows] = await connection.execute(
-        'SELECT protocol_version, checkpoint_seq, payload FROM crdt_checkpoint WHERE doc_id = ? FOR UPDATE',
-        [documentId]
-      )
-      const current = currentRows[0]
-      if (current?.payload?.length) {
+      const loaded = await this.readState(connection, documentId, current)
+      if (!loaded) throw new Error('CRDT document state does not exist')
+      const historical = restoreDocument(selected.payload, [])
+      try {
+        if (document) Y.applyUpdate(loaded.document, encodeCheckpoint(document))
         await connection.execute(
           `INSERT INTO crdt_checkpoint_history (doc_id, protocol_version, checkpoint_seq, payload, reason)
            VALUES (?, ?, ?, ?, 'PRE_RESTORE')`,
-          [documentId, current.protocol_version, current.checkpoint_seq, current.payload]
+          [documentId, PROTOCOL_VERSION, loaded.updateHighWater, Buffer.from(encodeCheckpoint(loaded.document))]
         )
+        // 使用当前谱系的删除时钟，旧缓存重连时不会重新带回已撤销的内容。
+        replaceDocumentContent(loaded.document, historical)
+        const payload = Buffer.from(encodeCheckpoint(loaded.document))
+        await connection.execute(
+          `INSERT INTO crdt_checkpoint (doc_id, protocol_version, checkpoint_seq, payload)
+           VALUES (?, ?, ?, ?)
+           ON DUPLICATE KEY UPDATE protocol_version = VALUES(protocol_version), checkpoint_seq = VALUES(checkpoint_seq),
+             payload = VALUES(payload), updated_at = CURRENT_TIMESTAMP(3)`,
+          [documentId, PROTOCOL_VERSION, loaded.updateHighWater, payload]
+        )
+        await connection.execute('DELETE FROM crdt_update WHERE doc_id = ? AND id <= ?', [documentId, loaded.updateHighWater])
+        await this.queueMaterialization(connection, documentId, payload)
+        await this.trimHistory(connection, documentId)
+      } finally {
+        historical.destroy()
+        loaded.document.destroy()
       }
-      await connection.execute(
-        `INSERT INTO crdt_checkpoint (doc_id, protocol_version, checkpoint_seq, payload)
-         VALUES (?, ?, ?, ?)
-         ON DUPLICATE KEY UPDATE protocol_version = VALUES(protocol_version), checkpoint_seq = VALUES(checkpoint_seq),
-           payload = VALUES(payload), updated_at = CURRENT_TIMESTAMP(3)`,
-        [documentId, selected.protocol_version, selected.checkpoint_seq, selected.payload]
-      )
-      await connection.execute('DELETE FROM crdt_update WHERE doc_id = ?', [documentId])
-      await this.trimHistory(connection, documentId)
-      await connection.commit()
-      return this.status(documentId)
-    } catch (error) {
-      await connection.rollback()
-      throw error
-    } finally {
-      connection.release()
-    }
+    })
+    return this.status(documentId)
   }
 
   async trimHistory(connection, documentId) {
@@ -215,10 +288,7 @@ export class CrdtStore {
   }
 
   async forceCheckpoint(documentId) {
-    const loaded = await this.loadWithMetadata(documentId)
-    if (!loaded) throw new Error('CRDT document state does not exist')
-    await this.checkpoint(documentId, loaded.document, loaded.updateHighWater, 'MANUAL')
-    loaded.document.destroy()
+    await this.checkpoint(documentId, null, null, 'MANUAL')
     return this.status(documentId)
   }
 }

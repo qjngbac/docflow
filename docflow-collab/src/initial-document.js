@@ -19,6 +19,7 @@ export function createInitialDocument(access) {
     allowedAttributes: {
       a: ['href', 'target', 'rel'], img: ['src', 'alt', 'title', 'loading', 'decoding'],
       th: ['colspan', 'rowspan', 'data-colwidth'], td: ['colspan', 'rowspan', 'data-colwidth'],
+      tr: ['data-row-height'],
       input: ['type', 'checked', 'disabled'], '*': ['class', 'title', 'data-type', 'data-latex', 'data-mathml', 'data-comment-id', 'data-change-id', 'data-change-type', 'data-author-id', 'data-author-name', 'data-last-edit-by', 'data-last-edit-name', 'data-docflow-style', 'data-font-family', 'data-font-size', 'data-text-color', 'data-text-align', 'data-line-height', 'data-indent', 'data-collapsed', 'data-equation-label', 'data-equation-number', 'data-formula-kind', 'data-footnote-id', 'data-footnote-text', 'data-citation-key', 'data-citation-title', 'data-citation-url']
     },
     allowedSchemes: ['http', 'https', 'mailto'],
@@ -46,6 +47,7 @@ export function documentToHtml(document) {
     allowedAttributes: {
       a: ['href', 'target', 'rel'], img: ['src', 'alt', 'title', 'loading', 'decoding'],
       th: ['colspan', 'rowspan', 'data-colwidth'], td: ['colspan', 'rowspan', 'data-colwidth'],
+      tr: ['data-row-height'],
       input: ['type', 'checked', 'disabled'], '*': ['class', 'title', 'data-type', 'data-latex', 'data-mathml', 'data-comment-id', 'data-change-id', 'data-change-type', 'data-author-id', 'data-author-name', 'data-last-edit-by', 'data-last-edit-name', 'data-docflow-style', 'data-font-family', 'data-font-size', 'data-text-color', 'data-text-align', 'data-line-height', 'data-indent', 'data-collapsed', 'data-equation-label', 'data-equation-number', 'data-formula-kind', 'data-footnote-id', 'data-footnote-text', 'data-citation-key', 'data-citation-title', 'data-citation-url']
     },
     allowedSchemes: ['http', 'https', 'mailto'],

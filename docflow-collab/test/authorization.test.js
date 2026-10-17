@@ -37,3 +37,19 @@ test('materialized snapshot uses the internal CRDT secret instead of a user toke
 
   await updateMaterializedSnapshot('3', '<p>saved</p>', 7)
 })
+
+test('materialized snapshot forwards its durable generation for Java ordering checks', async t => {
+  const previous = process.env.CRDT_ADMIN_SECRET
+  process.env.CRDT_ADMIN_SECRET = 'test-admin-secret'
+  t.after(() => {
+    if (previous === undefined) delete process.env.CRDT_ADMIN_SECRET
+    else process.env.CRDT_ADMIN_SECRET = previous
+  })
+  let requestBody
+  t.mock.method(globalThis, 'fetch', async (url, options) => {
+    requestBody = JSON.parse(options.body)
+    return new Response(JSON.stringify({ code: 200 }), { status: 200 })
+  })
+  await updateMaterializedSnapshot('3', '<p>saved</p>', 7, 42)
+  assert.deepEqual(requestBody, { html: '<p>saved</p>', editorUserId: 7, generation: 42 })
+})

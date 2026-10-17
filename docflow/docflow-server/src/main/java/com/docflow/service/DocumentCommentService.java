@@ -30,11 +30,14 @@ public class DocumentCommentService {
 
     public List<DocumentComment> list(Long docId, Long userId) {
         permissionService.requireReadable(docId, userId);
-        return commentMapper.selectList(new LambdaQueryWrapper<DocumentComment>()
+        List<DocumentComment> comments = commentMapper.selectList(new LambdaQueryWrapper<DocumentComment>()
                         .eq(DocumentComment::getDocId, docId)
                         .orderByAsc(DocumentComment::getStatus)
-                        .orderByDesc(DocumentComment::getCreatedAt))
-                .stream().map(this::withAuthor).toList();
+                        .orderByDesc(DocumentComment::getCreatedAt));
+        var ids = comments.stream().map(DocumentComment::getUserId).filter(java.util.Objects::nonNull).distinct().toList();
+        var authors = ids.isEmpty() ? java.util.Map.<Long, User>of() : userMapper.selectBatchIds(ids).stream()
+                .collect(java.util.stream.Collectors.toMap(User::getId, java.util.function.Function.identity()));
+        return comments.stream().map(comment -> withAuthor(comment, authors.get(comment.getUserId()))).toList();
     }
 
     @Transactional
@@ -122,6 +125,10 @@ public class DocumentCommentService {
 
     private DocumentComment withAuthor(DocumentComment comment) {
         User author = userMapper.selectById(comment.getUserId());
+        return withAuthor(comment, author);
+    }
+
+    private DocumentComment withAuthor(DocumentComment comment, User author) {
         if (author != null) {
             comment.setAuthorName(author.getNickname() == null || author.getNickname().isBlank()
                     ? author.getUsername() : author.getNickname());

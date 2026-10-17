@@ -31,14 +31,18 @@ if [[ -n "${previous}" ]]; then printf '%s\n' "${previous}" >"${STATE_DIR}/previ
 ln -sfn "${RELEASE_DIR}" "${CURRENT_LINK}.next"
 mv -Tf "${CURRENT_LINK}.next" "${CURRENT_LINK}"
 
-systemctl restart ${SERVICES}
-if ! "${HEALTH_SCRIPT}"; then
-  if [[ -n "${previous}" && -d "${previous}" ]]; then
-    ln -sfn "${previous}" "${CURRENT_LINK}.next"
-    mv -Tf "${CURRENT_LINK}.next" "${CURRENT_LINK}"
-    systemctl restart ${SERVICES}
-  fi
-  fail "new release was unhealthy; the application link was returned to the previous release"
+if systemctl restart ${SERVICES} && "${HEALTH_SCRIPT}"; then
+  printf 'DocFlow release activated: %s\n' "${RELEASE_DIR}"
+  exit 0
 fi
 
-printf 'DocFlow release activated: %s\n' "${RELEASE_DIR}"
+[[ -n "${previous}" && -d "${previous}" ]] || fail "new release failed restart or health checks; no previous release is available for rollback"
+ln -sfn "${previous}" "${CURRENT_LINK}.next"
+mv -Tf "${CURRENT_LINK}.next" "${CURRENT_LINK}"
+if ! systemctl restart ${SERVICES}; then
+  fail "application link was returned to the previous release, but rollback service restart failed"
+fi
+if ! "${HEALTH_SCRIPT}"; then
+  fail "application link was returned to the previous release, but the previous release is also unhealthy"
+fi
+fail "new release failed restart or health checks; the previous release was restored and passed health checks"

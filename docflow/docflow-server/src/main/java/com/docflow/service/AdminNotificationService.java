@@ -68,7 +68,7 @@ public class AdminNotificationService {
         if (recipients.isEmpty()) {
             throw new BusinessException(ErrorCode.NOT_FOUND, "当前发送范围内没有符合条件的用户");
         }
-        recipients.forEach(user -> notificationService.createAdminMessage(user.getId(), adminId, normalizedContent));
+        notificationService.createAdminMessages(recipients.stream().map(User::getId).toList(), adminId, normalizedContent);
         adminService.audit(adminId, "ADMIN_NOTIFICATION_SEND",
                 auditTarget + "；接收人数：" + recipients.size());
         return new SendResult(recipients.size());
@@ -76,6 +76,7 @@ public class AdminNotificationService {
 
     private List<User> selectUsers(LocalDateTime registeredFrom, LocalDateTime registeredTo) {
         LambdaQueryWrapper<User> query = new LambdaQueryWrapper<User>()
+                .select(User::getId)
                 .eq(User::getIsDeleted, 0)
                 .orderByAsc(User::getId);
         if (registeredFrom != null) query.ge(User::getCreatedAt, registeredFrom);

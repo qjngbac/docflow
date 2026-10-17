@@ -34,7 +34,16 @@ public class NotificationService {
                 .last("LIMIT 100");
         if (unreadOnly) query.eq(UserNotification::getIsRead, 0);
         if (type != null && !type.isBlank()) query.eq(UserNotification::getType, type.trim());
-        return notificationMapper.selectList(query).stream().map(this::enrich).toList();
+        List<UserNotification> notifications = notificationMapper.selectList(query);
+        var actorIds = notifications.stream().map(UserNotification::getActorId).filter(java.util.Objects::nonNull).distinct().toList();
+        var docIds = notifications.stream().map(UserNotification::getDocId).filter(java.util.Objects::nonNull).distinct().toList();
+        var actors = actorIds.isEmpty() ? java.util.Map.<Long, User>of() : userMapper.selectBatchIds(actorIds).stream()
+                .collect(java.util.stream.Collectors.toMap(User::getId, java.util.function.Function.identity()));
+        var documents = docIds.isEmpty() ? java.util.Map.<Long, Document>of() : documentMapper.selectBatchIds(docIds).stream()
+                .collect(java.util.stream.Collectors.toMap(Document::getId, java.util.function.Function.identity()));
+        return notifications.stream().map(notification -> enrich(notification,
+                notification.getActorId() == null ? null : actors.get(notification.getActorId()),
+                notification.getDocId() == null ? null : documents.get(notification.getDocId()))).toList();
     }
 
     public long unreadCount(Long userId) {
@@ -74,19 +83,22 @@ public class NotificationService {
     }
 
     public void createAdminMessage(Long userId, Long adminId, String content) {
-        UserNotification notification = new UserNotification();
-        notification.setUserId(userId);
-        notification.setActorId(adminId);
-        notification.setType("ADMIN_MESSAGE");
-        notification.setContent(content);
-        notification.setIsRead(0);
-        notification.setCreatedAt(LocalDateTime.now());
-        notificationMapper.insert(notification);
+        createAdminMessages(List.of(userId), adminId, content);
     }
 
-    private UserNotification enrich(UserNotification notification) {
-        User actor = notification.getActorId() == null ? null : userMapper.selectById(notification.getActorId());
-        Document document = notification.getDocId() == null ? null : documentMapper.selectById(notification.getDocId());
+    public void createAdminMessages(List<Long> userIds, Long adminId, String content) {
+        LocalDateTime createdAt = LocalDateTime.now();
+        for (int offset = 0; offset < userIds.size(); offset += 500) {
+            notificationMapper.insertAdminMessages(userIds.subList(offset, Math.min(offset + 500, userIds.size())),
+                    adminId, content, createdAt);
+        }
+    }
+
+    public void deleteByDocument(Long docId) {
+        notificationMapper.delete(new LambdaQueryWrapper<UserNotification>().eq(UserNotification::getDocId, docId));
+    }
+
+    private UserNotification enrich(UserNotification notification, User actor, Document document) {
         if (actor != null) notification.setActorName(actor.getNickname() == null || actor.getNickname().isBlank()
                 ? actor.getUsername() : actor.getNickname());
         if (document != null) notification.setDocumentTitle(document.getTitle());

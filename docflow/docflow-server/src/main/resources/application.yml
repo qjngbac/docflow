@@ -122,7 +122,7 @@ app:
     enabled: ${MAIL_ENABLED:false}
     from: ${MAIL_FROM:}
   verification:
-    debug-code: ${APP_VERIFICATION_DEBUG_CODE:true}
+    debug-code: ${APP_VERIFICATION_DEBUG_CODE:false}
     expire-minutes: ${VERIFICATION_EXPIRE_MINUTES:10}
     cooldown-seconds: ${VERIFICATION_COOLDOWN_SECONDS:60}
     daily-target-limit: ${VERIFICATION_DAILY_TARGET_LIMIT:10}

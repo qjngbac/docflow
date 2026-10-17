@@ -58,7 +58,7 @@ app:
     enabled: false
     from: no-reply@example.com
   verification:
-    debug-code: true
+    debug-code: false
     expire-minutes: 10
     cooldown-seconds: 60
     daily-target-limit: 10

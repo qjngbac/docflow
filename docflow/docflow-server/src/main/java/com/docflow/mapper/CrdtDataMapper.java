@@ -11,6 +11,9 @@ import org.apache.ibatis.annotations.Param;
  */
 public interface CrdtDataMapper {
 
+    @Delete("DELETE FROM crdt_materialization WHERE doc_id = #{docId}")
+    int deleteMaterialization(@Param("docId") Long docId);
+
     @Delete("DELETE FROM crdt_update WHERE doc_id = #{docId}")
     int deleteUpdates(@Param("docId") Long docId);
 

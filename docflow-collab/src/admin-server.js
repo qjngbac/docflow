@@ -40,7 +40,7 @@ function failureMessage(path) {
   return 'CRDT administration operation failed'
 }
 
-export function startAdminServer(store, evictDocument, replaceDocument) {
+export function startAdminServer(store, evictDocument, replaceDocument, restoreDocument) {
   const host = process.env.CRDT_ADMIN_HOST || '127.0.0.1'
   const port = Number(process.env.CRDT_ADMIN_PORT || 1235)
   const secret = process.env.CRDT_ADMIN_SECRET || 'docflow-local-admin'
@@ -62,6 +62,7 @@ export function startAdminServer(store, evictDocument, replaceDocument) {
       if (checkpointMatch && request.method === 'POST') return send(response, 200, await store.forceCheckpoint(documentId))
       if (historyMatch && request.method === 'GET') return send(response, 200, { items: await store.listHistory(documentId) })
       if (restoreMatch && request.method === 'POST') {
+        if (restoreDocument) return send(response, 200, await restoreDocument(documentId, Number(restoreMatch[2])))
         await evictDocument?.(documentId)
         return send(response, 200, await store.restoreCheckpoint(documentId, Number(restoreMatch[2])))
       }
@@ -72,8 +73,10 @@ export function startAdminServer(store, evictDocument, replaceDocument) {
       if (contentMatch && request.method === 'POST') {
         const body = await readJson(request, Number(process.env.CRDT_ADMIN_MAX_BODY_BYTES || 2 * 1024 * 1024))
         if (typeof body.html !== 'string') return send(response, 400, { message: 'HTML content is required' })
+        const contentFormat = body.contentFormat || 'HTML'
+        if (!['HTML', 'MARKDOWN'].includes(contentFormat)) return send(response, 400, { message: 'Unsupported content format' })
         if (!replaceDocument) return send(response, 503, { message: 'Content replacement is unavailable' })
-        return send(response, 200, await replaceDocument(documentId, body.html))
+        return send(response, 200, await replaceDocument(documentId, body.html, contentFormat))
       }
       return send(response, 405, { message: 'Method not allowed' })
     } catch (error) {

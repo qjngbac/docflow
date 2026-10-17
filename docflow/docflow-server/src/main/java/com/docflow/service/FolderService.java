@@ -98,9 +98,9 @@ public class FolderService {
         return 0L;
     }
 
-    private Folder requireOwnerFolder(Long id, Long userId) {
+    public Folder requireOwnerFolder(Long id, Long userId) {
         Folder folder = folderMapper.selectById(id);
-        if (folder == null) {
+        if (folder == null || Integer.valueOf(1).equals(folder.getIsDeleted())) {
             throw new BusinessException(ErrorCode.NOT_FOUND, "Folder not found");
         }
         if (!folder.getOwnerId().equals(userId)) {

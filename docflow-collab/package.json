@@ -10,9 +10,9 @@
     "postinstall": "node scripts/patch-hocuspocus-server.js"
   },
   "dependencies": {
-    "@hocuspocus/extension-redis": "latest",
-    "@hocuspocus/server": "latest",
-    "@hocuspocus/transformer": "latest",
+    "@hocuspocus/extension-redis": "4.3.0",
+    "@hocuspocus/server": "4.3.0",
+    "@hocuspocus/transformer": "4.3.0",
     "@tiptap/extension-image": "^3.27.3",
     "@tiptap/extension-mathematics": "^3.27.3",
     "@tiptap/extension-table": "^3.27.3",

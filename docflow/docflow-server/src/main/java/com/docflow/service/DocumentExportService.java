@@ -34,6 +34,7 @@ public class DocumentExportService {
     @Autowired private PermissionService permissionService;
     @Autowired private HtmlSanitizer htmlSanitizer;
     @Autowired private FileService fileService;
+    @Autowired private FileAccessService fileAccessService;
     @Value("${export.font-path:}") private String exportFontPath;
 
     public ExportedDocument exportDocx(Long docId, Long userId, String currentHtml) {
@@ -43,6 +44,7 @@ public class DocumentExportService {
             html = "<pre>" + org.jsoup.nodes.Entities.escape(html == null ? "" : html) + "</pre>";
         }
         String safeHtml = htmlSanitizer.clean(html);
+        authorizeFiles(safeHtml, document.getCoverImage(), userId);
         try (XWPFDocument word = new XWPFDocument(); ByteArrayOutputStream output = new ByteArrayOutputStream()) {
             configurePage(word, document);
             if (document.getCoverImage() != null) appendStandaloneImage(word, document.getCoverImage(), "Document cover");
@@ -61,6 +63,7 @@ public class DocumentExportService {
     public ExportedDocument exportPdf(Long docId, Long userId, String currentHtml) {
         Document document = permissionService.requireReadable(docId, userId);
         String safeHtml = htmlSanitizer.clean(currentHtml == null ? document.getContent() : currentHtml);
+        authorizeFiles(safeHtml, document.getCoverImage(), userId);
         Element body = Jsoup.parseBodyFragment(safeHtml == null ? "" : safeHtml).body();
         inlineStoredImages(body);
         String cover = dataUri(document.getCoverImage()).map(uri ->
@@ -88,6 +91,10 @@ public class DocumentExportService {
         parsed.outputSettings().syntax(org.jsoup.nodes.Document.OutputSettings.Syntax.xml).prettyPrint(false);
         try (ByteArrayOutputStream output = new ByteArrayOutputStream()) {
             PdfRendererBuilder builder = new PdfRendererBuilder();
+            builder.useExternalResourceAccessControl((uri, type) -> uri != null && uri.startsWith("data:"),
+                    com.openhtmltopdf.outputdevice.helper.ExternalResourceControlPriority.RUN_BEFORE_RESOLVING_URI);
+            builder.useExternalResourceAccessControl((uri, type) -> uri != null && uri.startsWith("data:"),
+                    com.openhtmltopdf.outputdevice.helper.ExternalResourceControlPriority.RUN_AFTER_RESOLVING_URI);
             Path font = resolveExportFont();
             if (font != null) builder.useFont(font.toFile(), "DocFlow Sans");
             builder.withHtmlContent(parsed.html(), null);
@@ -106,6 +113,10 @@ public class DocumentExportService {
         run.setBold(true);
         run.setFontSize(20);
         run.setText(title == null || title.isBlank() ? "Untitled Document" : title);
+    }
+
+    private void authorizeFiles(String html, String cover, Long userId) {
+        for (String url : FileAccessService.references(html, cover)) fileAccessService.requireReadable(url, userId);
     }
 
     /** 按块级HTML节点映射标题、列表、表格、引用、代码和分页等Word结构。 */
@@ -299,7 +310,8 @@ public class DocumentExportService {
     private long mmToTwips(int mm) { return Math.round(mm * 56.6929d); }
     private String cssText(String value) {
         if (value == null) return "";
-        return value.replace("\\", "\\\\").replace("'", "\\'").replace("\n", " ").replace("\r", " ");
+        return value.replace("\\", "\\\\").replace("'", "\\'").replace("<", "\\3c ")
+                .replace(">", "\\3e ").replace("\n", " ").replace("\r", " ");
     }
 
     public record ExportedDocument(String fileName, byte[] content) {}

@@ -47,6 +47,15 @@ class FolderServiceTest {
     }
 
     @Test
+    void deletedFolderCannotBeUsedAsParent() {
+        when(folderMapper.selectById(50L)).thenReturn(folder(50L, 0L, 1));
+        var request = new com.docflow.dto.FolderRequest();
+        request.setName("child"); request.setParentId(50L);
+        org.assertj.core.api.Assertions.assertThatThrownBy(() -> folderService.create(9L, request))
+                .isInstanceOf(com.docflow.common.BusinessException.class);
+    }
+
+    @Test
     void deletingAFolderMovesContentsToItsParentAndOnlyHidesThatFolder() {
         when(folderMapper.selectById(50L)).thenReturn(folder(50L, 40L, 0));
         when(folderMapper.selectById(40L)).thenReturn(folder(40L, 0L, 0));

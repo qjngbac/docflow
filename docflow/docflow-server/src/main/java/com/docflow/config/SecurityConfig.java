@@ -28,8 +28,6 @@ public class SecurityConfig {
     private ApiRateLimitFilter apiRateLimitFilter;
     @Autowired
     private CookieCsrfFilter cookieCsrfFilter;
-    @Value("${file.public-access-enabled:true}")
-    private boolean publicFileAccess;
     @Value("${app.security.headers.content-security-policy:default-src 'self'; img-src 'self' data: blob:; style-src 'self' 'unsafe-inline'; font-src 'self' data:; script-src 'self'; connect-src 'self' ws: wss:; object-src 'none'; base-uri 'self'; frame-ancestors 'none'; form-action 'self'}")
     private String contentSecurityPolicy;
 
@@ -66,8 +64,7 @@ public class SecurityConfig {
                     auth.requestMatchers("/api/v1/auth/**").permitAll();
                     auth.requestMatchers("/api/v1/share/**", "/api/v1/public-files/**").permitAll();
                     auth.requestMatchers("/api/v1/docs/*/crdt/snapshot").permitAll();
-                    if (publicFileAccess) auth.requestMatchers("/files/**").permitAll();
-                    else auth.requestMatchers("/files/**").authenticated();
+                    auth.requestMatchers("/files/**").permitAll(); // Controller permits only registry-backed avatars anonymously.
                     auth.requestMatchers("/ws/**").permitAll();
                     auth.anyRequest().authenticated();
                 })

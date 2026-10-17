@@ -61,7 +61,11 @@ public class CrdtAccessController {
         if (!constantTimeEquals(crdtAdminSecret, suppliedSecret)) {
             throw new BusinessException(ErrorCode.FORBIDDEN, "CRDT 服务身份校验失败");
         }
-        docService.updateCrdtSnapshotFromCollaboration(docId, snapshot.getEditorUserId(), snapshot.getHtml());
+        if (snapshot.getGeneration() == null) {
+            docService.updateCrdtSnapshotFromCollaboration(docId, snapshot.getEditorUserId(), snapshot.getHtml());
+        } else {
+            docService.updateCrdtSnapshotFromCollaboration(docId, snapshot.getEditorUserId(), snapshot.getHtml(), snapshot.getGeneration());
+        }
         return Result.success();
     }
 
@@ -75,6 +79,7 @@ public class CrdtAccessController {
     public static class CrdtSnapshot {
         private String html;
         private Long editorUserId;
+        private Long generation;
     }
 
     @Data

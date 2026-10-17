@@ -33,7 +33,7 @@ async function withAdminServer(handlers = {}, run) {
   process.env.CRDT_ADMIN_PORT = '0'
   process.env.CRDT_ADMIN_HOST = '127.0.0.1'
   process.env.CRDT_ADMIN_SECRET = 'test-secret'
-  const server = await startAdminServer(handlers.store ?? {}, handlers.evictDocument, handlers.replaceDocument)
+  const server = await startAdminServer(handlers.store ?? {}, handlers.evictDocument, handlers.replaceDocument, handlers.restoreDocument)
   try {
     return await run(server.address().port, 'Bearer test-secret')
   } finally {
@@ -105,6 +105,32 @@ test('restore loads the requested checkpoint and evicts the live document first'
     assert.equal(response.status, 200)
     assert.equal(response.body.restored, true)
     assert.deepEqual(order, ['evict:11', 'restore:11:9'])
+  })
+})
+
+test('restore delegates the complete live operation when supplied', async () => {
+  let restored
+  await withAdminServer({ restoreDocument: async (id, historyId) => {
+    restored = [id, historyId]
+    return { restored: true }
+  } }, async (port, authorization) => {
+    const response = await request(port, '/documents/11/checkpoints/9/restore', authorization, 'POST')
+    assert.equal(response.status, 200)
+    assert.deepEqual(restored, [11, 9])
+  })
+})
+
+test('content replacement forwards its format and rejects unsupported formats', async () => {
+  let received
+  await withAdminServer({ replaceDocument: async (id, content, format) => {
+    received = { id, content, format }
+    return { replaced: true }
+  } }, async (port, authorization) => {
+    const response = await request(port, '/documents/11/content', authorization, 'POST', { html: '**earlier**', contentFormat: 'MARKDOWN' })
+    assert.equal(response.status, 200)
+    assert.deepEqual(received, { id: 11, content: '**earlier**', format: 'MARKDOWN' })
+    const invalid = await request(port, '/documents/11/content', authorization, 'POST', { html: 'bad', contentFormat: 'OTHER' })
+    assert.equal(invalid.status, 400)
   })
 })
 

@@ -20,6 +20,7 @@ import java.util.Base64;
 @Component
 public class AuthCookieService {
     private static final SecureRandom RANDOM = new SecureRandom();
+    private static final String FILE_COOKIE = "DOCFLOW_FILE_ACCESS";
 
     private final boolean enabled;
     private final boolean secure;
@@ -57,8 +58,20 @@ public class AuthCookieService {
         return readCookie(request, csrfCookieName);
     }
 
+    public String readFileAccessToken(HttpServletRequest request) {
+        if (!("GET".equals(request.getMethod()) || "HEAD".equals(request.getMethod()))
+                || !request.getRequestURI().startsWith("/files/") || request.getCookies() == null) return null;
+        for (Cookie cookie : request.getCookies()) if (FILE_COOKIE.equals(cookie.getName())) return cookie.getValue();
+        return null;
+    }
+
+    public void writeFileAccess(HttpServletResponse response, String token, Long lifetimeSeconds) {
+        add(response, FILE_COOKIE, token, "/files", lifetimeSeconds, true);
+    }
+
     public void write(HttpServletResponse response, String accessToken, long accessSeconds,
                       String refreshToken, LocalDateTime sessionExpiresAt, boolean persistent) {
+        writeFileAccess(response, accessToken, persistent ? accessSeconds : null);
         if (!enabled) return;
         long refreshSeconds = Math.max(60L, sessionExpiresAt.atZone(ZoneId.systemDefault()).toEpochSecond()
                 - java.time.Instant.now().getEpochSecond());
@@ -71,6 +84,7 @@ public class AuthCookieService {
     }
 
     public void clear(HttpServletResponse response) {
+        writeFileAccess(response, "", 0L);
         if (!enabled) return;
         add(response, accessCookieName, "", "/", 0L, true);
         add(response, refreshCookieName, "", "/api/v1/auth", 0L, true);

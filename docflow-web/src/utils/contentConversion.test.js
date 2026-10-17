@@ -71,6 +71,12 @@ describe('content conversion', () => {
 })
 
 describe('editor metadata', () => {
+  it('preserves table row height for editor and export round trips', () => {
+    const html = sanitizeHtml('<table><tbody><tr data-row-height="84" style="height:84px"><td><p>Cell</p></td></tr></tbody></table>')
+    expect(html).toContain('data-row-height="84"')
+    expect(html).toContain('height:84px')
+  })
+
   it('keeps safe math and comment attributes while removing event handlers', () => {
     const html = sanitizeHtml('<span data-type="inline-math" data-latex="E=mc^2" data-comment-id="7" onclick="alert(1)"></span>')
     expect(html).toContain('data-latex="E=mc^2"')

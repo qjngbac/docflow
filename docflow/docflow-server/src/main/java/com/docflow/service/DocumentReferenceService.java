@@ -117,6 +117,19 @@ public class DocumentReferenceService {
         return key;
     }
 
+    public void deleteByDocument(Long docId) {
+        referenceMapper.delete(new LambdaQueryWrapper<DocumentReference>().eq(DocumentReference::getDocId, docId));
+    }
+
+    public void copyToDocument(Long sourceId, Long targetId, Long userId) {
+        for (DocumentReference source : list(sourceId, userId)) {
+            DocumentReference copy = new DocumentReference();
+            copy.setDocId(targetId); copy.setCiteKey(source.getCiteKey()); copy.setDoi(source.getDoi());
+            copy.setCslJson(source.getCslJson()); copy.setCreatedBy(userId);
+            referenceMapper.insert(copy);
+        }
+    }
+
     private String normalizeCsl(String raw, String citeKey) {
         try {
             JsonNode node = objectMapper.readTree(raw);

@@ -50,6 +50,13 @@ public class DocService {
     @Autowired private DocumentCommentService documentCommentService;
     @Autowired private CrdtDataMapper crdtDataMapper;
     @Autowired private CrdtCheckpointService crdtCheckpointService;
+    @Autowired private FolderService folderService;
+    @Autowired private FileAccessService fileAccessService;
+    @Autowired private FileService fileService;
+    @Autowired private DocumentReferenceService documentReferenceService;
+    @Autowired private NotificationService notificationService;
+    @Autowired private AttachmentUploadService attachmentUploadService;
+    @Autowired private org.springframework.transaction.support.TransactionTemplate transactions;
     @Value("${app.trash.retention-days:30}") private int trashRetentionDays;
 
     public List<Document> list(Long userId, Long folderId, boolean includeDeleted, String scope, String category) {
@@ -59,6 +66,7 @@ public class DocService {
         if ("favorites".equalsIgnoreCase(scope) && favoriteIds.isEmpty()) return List.of();
         List<Long> permittedDocIds = permissionService.listAccessibleDocIds(userId);
         LambdaQueryWrapper<Document> wrapper = new LambdaQueryWrapper<Document>()
+                .select(Document.class, field -> !"content".equals(field.getProperty()))
                 .and(w -> {
                     w.eq(Document::getOwnerId, userId);
                     if (!permittedDocIds.isEmpty()) {
@@ -81,7 +89,7 @@ public class DocService {
             wrapper.last("LIMIT 30");
         }
         return documentMapper.selectList(wrapper).stream()
-                .map(collaborationService::mergeDraft)
+                .map(this::listMetadata)
                 .peek(document -> document.setIsFavorite(favoriteIds.contains(document.getId()) ? 1 : 0))
                 .toList();
     }
@@ -95,6 +103,7 @@ public class DocService {
                 new LambdaQueryWrapper<DocumentFavorite>().eq(DocumentFavorite::getUserId, userId))
                 .stream().map(DocumentFavorite::getDocId).toList());
         return documentMapper.selectList(new LambdaQueryWrapper<Document>()
+                .select(Document.class, field -> !"content".equals(field.getProperty()))
                 .and(w -> {
                     w.eq(Document::getOwnerId, userId);
                     if (!permittedDocIds.isEmpty()) {
@@ -104,13 +113,14 @@ public class DocService {
                 .eq(Document::getIsDeleted, 0)
                 .and(w -> w.like(Document::getTitle, keyword).or().like(Document::getContent, keyword))
                 .orderByDesc(Document::getUpdatedAt)).stream()
-                .map(collaborationService::mergeDraft)
+                .map(this::listMetadata)
                 .peek(document -> document.setIsFavorite(favoriteIds.contains(document.getId()) ? 1 : 0))
                 .toList();
     }
 
     @Transactional
     public Document create(Long userId, DocumentCreateRequest request) {
+        validateFolder(request.getFolderId(), userId);
         String initialContent = request.getContent();
         String initialFormat = request.getContentFormat();
         String initialCategory = request.getCategory();
@@ -143,6 +153,10 @@ public class DocService {
         collaborationService.initializeDefaults(document);
         document.setLastPersistedAt(LocalDateTime.now());
         documentMapper.insert(document);
+        if (request.getTemplateId() != null) {
+            fileAccessService.copyTemplateReferences(request.getTemplateId(), document.getId(), userId);
+        }
+        fileAccessService.associateDocumentReferences(document.getId(), document.getContent(), document.getCoverImage(), userId);
         versionService.createSnapshot(document, userId, "AUTO");
         return document;
     }
@@ -156,7 +170,10 @@ public class DocService {
         copy.setContent(source.getContent() == null ? "" : source.getContent());
         copy.setSummary(source.getSummary());
         copy.setOwnerId(userId);
-        copy.setFolderId(folderId == null ? source.getFolderId() : folderId);
+        Long targetFolder = folderId == null
+                ? (userId.equals(source.getOwnerId()) ? source.getFolderId() : 0L) : folderId;
+        validateFolder(targetFolder, userId);
+        copy.setFolderId(targetFolder);
         copy.setIsPinned(0);
         copy.setIsFavorite(0);
         copy.setCategory(source.getCategory());
@@ -175,6 +192,8 @@ public class DocService {
         collaborationService.initializeDefaults(copy);
         copy.setLastPersistedAt(LocalDateTime.now());
         documentMapper.insert(copy);
+        fileAccessService.copyDocumentReferences(docId, copy.getId(), userId);
+        documentReferenceService.copyToDocument(docId, copy.getId(), userId);
         versionService.createSnapshot(copy, userId, "AUTO");
         return copy;
     }
@@ -192,13 +211,24 @@ public class DocService {
     @Transactional
     /** 仅供受共享密钥保护的协作服务回写物化HTML，用户请求不能直接调用。 */
     public void updateCrdtSnapshotFromCollaboration(Long docId, Long editorUserId, String html) {
+        updateCrdtSnapshotFromCollaboration(docId, editorUserId, html, null);
+    }
+
+    @Transactional
+    public void updateCrdtSnapshotFromCollaboration(Long docId, Long editorUserId, String html, Long generation) {
         Document document = permissionService.requireDocument(docId);
         Long effectiveEditorId = editorUserId == null ? document.getOwnerId() : editorUserId;
-        persistCrdtSnapshot(docId, effectiveEditorId, html, document);
+        persistCrdtSnapshot(docId, effectiveEditorId, html, document, generation);
     }
 
     /** 净化CRDT导出的HTML并同步摘要、哈希、修订号和最后编辑信息。 */
     private void persistCrdtSnapshot(Long docId, Long userId, String html, Document document) {
+        persistCrdtSnapshot(docId, userId, html, document, null);
+    }
+
+    private void persistCrdtSnapshot(Long docId, Long userId, String html, Document document, Long generation) {
+        long currentGeneration = document.getCrdtMaterializedGeneration() == null ? 0L : document.getCrdtMaterializedGeneration();
+        if ((generation == null && currentGeneration > 0) || (generation != null && generation <= currentGeneration)) return;
         if (!"CRDT".equals(document.getCollabMode())) {
             throw new BusinessException(ErrorCode.CONFLICT, "Document is not in CRDT mode");
         }
@@ -208,8 +238,15 @@ public class DocService {
         long nextRevision = contentChanged
                 ? (document.getRevision() == null ? 1L : document.getRevision() + 1L)
                 : (document.getRevision() == null ? 0L : document.getRevision());
-        documentMapper.update(null, new LambdaUpdateWrapper<Document>()
-                .eq(Document::getId, docId)
+        LambdaUpdateWrapper<Document> update = new LambdaUpdateWrapper<Document>().eq(Document::getId, docId);
+        if (generation != null) {
+            update.and(w -> w.isNull(Document::getCrdtMaterializedGeneration)
+                    .or().lt(Document::getCrdtMaterializedGeneration, generation))
+                    .set(Document::getCrdtMaterializedGeneration, generation);
+        } else {
+            update.and(w -> w.isNull(Document::getCrdtMaterializedGeneration).or().eq(Document::getCrdtMaterializedGeneration, 0));
+        }
+        int rows = documentMapper.update(null, update
                 .set(Document::getContent, safeHtml)
                 .set(Document::getContentFormat, "HTML")
                 .set(Document::getSummary, DocumentContentUtils.summary(safeHtml))
@@ -219,6 +256,7 @@ public class DocService {
                 .set(Document::getContentHash, DocumentContentUtils.sha256(safeHtml))
                 .set(Document::getLastPersistedAt, persistedAt)
                 .set(Document::getUpdatedAt, persistedAt));
+        if (rows == 0) return;
         if (contentChanged) {
             document.setContent(safeHtml);
             document.setContentFormat("HTML");
@@ -231,7 +269,8 @@ public class DocService {
 
     @Transactional
     public Document update(Long docId, Long userId, DocumentUpdateRequest request) {
-        Document document = permissionService.requireWritable(docId, userId);
+        Document document = favoriteOnly(request) ? permissionService.requireReadable(docId, userId)
+                : permissionService.requireWritable(docId, userId);
         boolean crdtDocument = "CRDT".equals(document.getCollabMode());
         if (crdtDocument && request.getContent() != null) {
             throw new BusinessException(ErrorCode.CONFLICT,
@@ -248,6 +287,7 @@ public class DocService {
             metadataChanged = true;
         }
         if (request.getFolderId() != null) {
+            validateFolder(request.getFolderId(), document.getOwnerId());
             document.setFolderId(request.getFolderId());
             metadataUpdate.set(Document::getFolderId, request.getFolderId());
             metadataChanged = true;
@@ -277,6 +317,7 @@ public class DocService {
             metadataChanged = true;
         }
         if (request.getCoverImage() != null) {
+            fileAccessService.associateDocumentReferences(docId, null, request.getCoverImage(), userId);
             document.setCoverImage(StringUtils.hasText(request.getCoverImage()) ? request.getCoverImage().trim() : null);
             metadataUpdate.set(Document::getCoverImage, document.getCoverImage());
             metadataChanged = true;
@@ -306,6 +347,7 @@ public class DocService {
             document.setLastEditBy(userId);
         }
         if (contentChanged) {
+            fileAccessService.associateDocumentReferences(docId, request.getContent(), null, userId);
             return collaborationService.stageUpdate(
                     docId, userId, request.getTitle(), request.getContent(), request.getRevision());
         }
@@ -343,6 +385,9 @@ public class DocService {
         }
         collaborationService.flushDocument(docId);
         if ("CRDT".equals(document.getCollabMode())) crdtCheckpointService.disconnect(docId);
+        List<String> storedFiles = fileAccessService.documentUrls(docId);
+        attachmentUploadService.deleteByDocument(docId);
+        fileAccessService.removeDocumentReferences(docId);
         attachmentService.deleteByDocument(docId);
         tagService.deleteRelations(docId);
         documentCommentService.deleteByDocument(docId);
@@ -352,10 +397,14 @@ public class DocService {
                 .eq(com.docflow.entity.DocPermission::getDocId, docId));
         documentFavoriteMapper.delete(new LambdaQueryWrapper<DocumentFavorite>()
                 .eq(DocumentFavorite::getDocId, docId));
+        documentReferenceService.deleteByDocument(docId);
+        notificationService.deleteByDocument(docId);
+        crdtDataMapper.deleteMaterialization(docId);
         crdtDataMapper.deleteUpdates(docId);
         crdtDataMapper.deleteCheckpointHistory(docId);
         crdtDataMapper.deleteCheckpoint(docId);
         documentMapper.deleteById(docId);
+        storedFiles.forEach(fileService::deleteAfterCommit);
     }
 
     @Transactional
@@ -413,8 +462,35 @@ public class DocService {
         List<Document> documents = documentMapper.selectList(new LambdaQueryWrapper<Document>()
                 .eq(Document::getIsDeleted, 1)
                 .lt(Document::getDeletedAt, time));
-        documents.forEach(document -> purge(document.getId(), document.getOwnerId()));
-        return documents.size();
+        int cleaned = 0;
+        for (Document document : documents) {
+            try {
+                transactions.executeWithoutResult(status -> purge(document.getId(), document.getOwnerId()));
+                cleaned++;
+            } catch (RuntimeException exception) {
+                org.slf4j.LoggerFactory.getLogger(DocService.class)
+                        .warn("Trash cleanup failed for document {}", document.getId(), exception);
+            }
+        }
+        return cleaned;
+    }
+
+    private void validateFolder(Long folderId, Long ownerId) {
+        if (folderId != null && folderId != 0L) folderService.requireOwnerFolder(folderId, ownerId);
+    }
+
+    private Document listMetadata(Document document) {
+        if (!"CRDT".equals(document.getCollabMode())) document = collaborationService.mergeDraft(document);
+        document.setContent(null);
+        return document;
+    }
+
+    private boolean favoriteOnly(DocumentUpdateRequest request) {
+        return request.getFavorite() != null && request.getTitle() == null && request.getContent() == null
+                && request.getFolderId() == null && request.getPinned() == null && request.getCategory() == null
+                && request.getContentFormat() == null && request.getCoverImage() == null && request.getPageFormat() == null
+                && request.getMarginTop() == null && request.getMarginRight() == null && request.getMarginBottom() == null
+                && request.getMarginLeft() == null && request.getPageHeader() == null && request.getPageFooter() == null;
     }
 
     public int getTrashRetentionDays() {

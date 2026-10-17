@@ -53,4 +53,16 @@ class CookieSecurityTest {
         request.setCookies(new Cookie("DOCFLOW_ACCESS", "access"), new Cookie("XSRF-TOKEN", "csrf-value"));
         return request;
     }
+
+    @Test
+    void bearerModeStillIssuesAnHttpOnlyCookieRestrictedToFileReads() {
+        AuthCookieService bearer = new AuthCookieService(false, true, "Lax",
+                "DOCFLOW_ACCESS", "DOCFLOW_REFRESH", "XSRF-TOKEN");
+        var response = new MockHttpServletResponse();
+        bearer.write(response, "access", 1800, "refresh", LocalDateTime.now().plusDays(1), false);
+        assertThat(response.getHeaders("Set-Cookie"))
+                .anyMatch(value -> value.startsWith("DOCFLOW_FILE_ACCESS=access")
+                        && value.contains("Path=/files") && value.contains("HttpOnly") && value.contains("Secure"))
+                .noneMatch(value -> value.startsWith("DOCFLOW_ACCESS=") || value.startsWith("DOCFLOW_REFRESH="));
+    }
 }

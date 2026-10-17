@@ -61,6 +61,9 @@ public class JwtAuthFilter extends OncePerRequestFilter {
                 UsernamePasswordAuthenticationToken authentication =
                         new UsernamePasswordAuthenticationToken(username, null, Collections.emptyList());
                 SecurityContextHolder.getContext().setAuthentication(authentication);
+                if (request.getRequestURI().startsWith("/api/") && !"realtime".equals(jwtUtil.getTokenType(token))) {
+                    authCookieService.writeFileAccess(response, token, null);
+                }
             }
             filterChain.doFilter(request, response);
         } finally {
@@ -74,7 +77,8 @@ public class JwtAuthFilter extends OncePerRequestFilter {
         if (StringUtils.hasText(bearer) && bearer.startsWith("Bearer ")) {
             return bearer.substring(7);
         }
-        return authCookieService.readAccessToken(request);
+        String token = authCookieService.readAccessToken(request);
+        return StringUtils.hasText(token) ? token : authCookieService.readFileAccessToken(request);
     }
 
     private boolean isRealtimeAccessRequest(HttpServletRequest request) {

@@ -6,10 +6,7 @@ import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.data.redis.core.StringRedisTemplate;
 
-import java.nio.charset.StandardCharsets;
 import java.util.Base64;
-import java.util.regex.Matcher;
-import java.util.regex.Pattern;
 import java.time.Duration;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -26,7 +23,9 @@ class LoginProtectionServiceTest {
         ObjectProvider<StringRedisTemplate> provider = mock(ObjectProvider.class);
         when(provider.getIfAvailable()).thenReturn(null);
         SecurityStateStore state = new SecurityStateStore(provider, false);
-        service = new LoginProtectionService(state, 3, 5, 20, 15, 15, 30, 5);
+        service = new LoginProtectionService(state, 3, 5, 20, 15, 15, 30, 5) {
+            @Override String randomCaptcha() { return "ABCDE"; }
+        };
     }
 
     @Test
@@ -35,11 +34,10 @@ class LoginProtectionServiceTest {
         assertThat(service.status("alice", "10.0.0.8").captchaRequired()).isTrue();
 
         LoginProtectionService.CaptchaChallenge challenge = service.createCaptcha("alice", "10.0.0.8");
-        String svg = new String(Base64.getDecoder().decode(
-                challenge.imageDataUrl().substring(challenge.imageDataUrl().indexOf(',') + 1)), StandardCharsets.UTF_8);
-        Matcher matcher = Pattern.compile(">(\\w{5})</text>").matcher(svg);
-        assertThat(matcher.find()).isTrue();
-        String answer = matcher.group(1);
+        assertThat(challenge.imageDataUrl()).startsWith("data:image/png;base64,");
+        byte[] raster = Base64.getDecoder().decode(challenge.imageDataUrl().split(",", 2)[1]);
+        assertThat(raster).startsWith((byte) 0x89, (byte) 0x50, (byte) 0x4e, (byte) 0x47);
+        String answer = "ABCDE";
 
         service.checkBeforeLogin("alice", "10.0.0.8", challenge.captchaId(), answer);
         assertThatThrownBy(() -> service.checkBeforeLogin("alice", "10.0.0.8", challenge.captchaId(), answer))

@@ -79,7 +79,7 @@ Javaproject/
 CREATE DATABASE docflow CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
 ```
 
-全新数据库推荐启用 Flyway，让后端执行 `V1__baseline.sql`：
+全新数据库推荐启用 Flyway，让后端依次执行 V1～V5 迁移，建立当前完整结构：
 
 ```powershell
 $env:DB_URL="jdbc:mysql://127.0.0.1:3306/docflow?useUnicode=true&characterEncoding=utf-8&useSSL=false&serverTimezone=Asia/Shanghai"
@@ -108,9 +108,9 @@ mvn -pl docflow-server -am spring-boot:run
 
 ```powershell
 cd D:\Javaproject\docflow-collab
-Copy-Item .env.example .env
+if (-not (Test-Path .env)) { Copy-Item .env.example .env }
 # 编辑 .env，填写数据库密码，并让 CRDT_ADMIN_SECRET 与 Java 服务保持一致
-npm install
+npm ci
 npm start
 ```
 
@@ -120,8 +120,8 @@ WebSocket 默认地址：`ws://localhost:1234`。本地没有 Redis 时可在 `.
 
 ```powershell
 cd D:\Javaproject\docflow-web
-Copy-Item .env.example .env
-npm install
+if (-not (Test-Path .env)) { Copy-Item .env.example .env }
+npm ci
 npm run dev
 ```
 

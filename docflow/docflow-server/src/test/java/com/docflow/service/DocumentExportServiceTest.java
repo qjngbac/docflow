@@ -49,4 +49,16 @@ class DocumentExportServiceTest {
             assertThat(tableText).contains("Name", "Value", "A", "B");
         }
     }
+
+    @Test
+    void pdfHeaderCannotInjectExternalStylesheets() throws Exception {
+        for (String tag : new String[]{"</style>", "</StYlE>"}) {
+            String malicious = tag + "<link rel=stylesheet href=https://invalid.example/style.css><style>";
+            String escaped = ReflectionTestUtils.invokeMethod(service, "cssText", malicious);
+            var parsed = org.jsoup.Jsoup.parse("<html><head><style>@page{@top-center{content:'"
+                    + escaped + "'}}</style></head><body><p>Ordinary content</p></body></html>");
+            assertThat(parsed.select("link")).isEmpty();
+            assertThat(parsed.body().text()).isEqualTo("Ordinary content");
+        }
+    }
 }

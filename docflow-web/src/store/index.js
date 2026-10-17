@@ -55,16 +55,22 @@ export const useDocStore = defineStore('doc', () => {
   const currentFolderId = ref(0)
   const viewMode = ref('documents')
   const loading = ref(false)
+  const loadError = ref('')
   const trashRetentionDays = ref(30)
+  let searchKeyword = ''
 
   async function loadDocs(folderId = 0) {
     loading.value = true
+    loadError.value = ''
     try {
       viewMode.value = 'documents'
       currentFolderId.value = Number(folderId || 0)
       const params = currentFolderId.value ? { folderId: currentFolderId.value } : undefined
       const response = await docApi.list(params)
       docs.value = (response.data || []).filter(doc => !doc.isDeleted)
+    } catch (exception) {
+      loadError.value = exception.message || '文档加载失败，请重试'
+      throw exception
     } finally {
       loading.value = false
     }
@@ -72,16 +78,21 @@ export const useDocStore = defineStore('doc', () => {
 
   async function loadScope(scope) {
     loading.value = true
+    loadError.value = ''
     try {
       viewMode.value = scope
       currentFolderId.value = 0
       const response = await docApi.list({ scope })
       docs.value = response.data || []
+    } catch (exception) {
+      loadError.value = exception.message || '文档加载失败，请重试'
+      throw exception
     } finally { loading.value = false }
   }
 
   async function loadTrash() {
     loading.value = true
+    loadError.value = ''
     try {
       viewMode.value = 'trash'
       currentFolderId.value = 0
@@ -91,6 +102,9 @@ export const useDocStore = defineStore('doc', () => {
       ])
       docs.value = (documentsResponse.data || []).filter(doc => Boolean(doc.isDeleted))
       trashRetentionDays.value = Number(settingsResponse.data?.retentionDays || 30)
+    } catch (exception) {
+      loadError.value = exception.message || '文档加载失败，请重试'
+      throw exception
     } finally {
       loading.value = false
     }
@@ -200,18 +214,30 @@ export const useDocStore = defineStore('doc', () => {
 
   async function searchDocs(keyword) {
     loading.value = true
+    loadError.value = ''
+    searchKeyword = keyword
     try {
       viewMode.value = 'search'
       const response = await docApi.search(keyword)
       docs.value = response.data || []
+    } catch (exception) {
+      loadError.value = exception.message || '文档加载失败，请重试'
+      throw exception
     } finally {
       loading.value = false
     }
   }
 
+  function retryLoad() {
+    if (viewMode.value === 'search') return searchDocs(searchKeyword)
+    if (viewMode.value === 'trash') return loadTrash()
+    if (viewMode.value === 'recent' || viewMode.value === 'favorites') return loadScope(viewMode.value)
+    return loadDocs(currentFolderId.value)
+  }
+
   return {
-    docs, currentDoc, folders, folderTree, currentFolderId, viewMode, loading, trashRetentionDays,
+    docs, currentDoc, folders, folderTree, currentFolderId, viewMode, loading, loadError, trashRetentionDays,
     loadDocs, loadScope, loadTrash, loadFolders, createFolder, updateFolder, deleteFolder,
-    createDoc, rememberCreatedDoc, rememberUpdatedDoc, deleteDoc, restoreDoc, purgeDoc, togglePin, toggleFavorite, batch, moveDoc, copyDoc, searchDocs
+    createDoc, rememberCreatedDoc, rememberUpdatedDoc, deleteDoc, restoreDoc, purgeDoc, togglePin, toggleFavorite, batch, moveDoc, copyDoc, searchDocs, retryLoad
   }
 })

@@ -15,7 +15,6 @@ import org.springframework.web.bind.annotation.RestController;
 
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Path;
-import java.time.Duration;
 
 @RestController
 @RequestMapping("/api/v1/public-files")
@@ -29,15 +28,17 @@ public class PublicFileController {
     @GetMapping
     public ResponseEntity<FileSystemResource> get(@RequestParam("path") String fileUrl,
                                                    @RequestParam long expires,
-                                                   @RequestParam String signature) {
-        Path path = signedFiles.resolve(fileUrl, expires, signature).orElse(null);
+                                                    @RequestParam String signature,
+                                                    @RequestParam Long docId,
+                                                    @RequestParam String shareToken) {
+        Path path = signedFiles.resolve(fileUrl, expires, signature, docId, shareToken).orElse(null);
         if (path == null) return ResponseEntity.notFound().build();
         MediaType type = MediaTypeFactory.getMediaType(path.getFileName().toString())
                 .orElse(MediaType.APPLICATION_OCTET_STREAM);
         ContentDisposition disposition = ContentDisposition.inline()
                 .filename(path.getFileName().toString(), StandardCharsets.UTF_8).build();
         return ResponseEntity.ok()
-                .cacheControl(CacheControl.maxAge(Duration.ofMinutes(5)).cachePrivate())
+                .cacheControl(CacheControl.noStore())
                 .header(HttpHeaders.CONTENT_DISPOSITION, disposition.toString())
                 .contentType(type)
                 .body(new FileSystemResource(path));

@@ -7,6 +7,12 @@ import org.springframework.stereotype.Service;
 import org.springframework.util.StringUtils;
 import org.springframework.web.multipart.MultipartFile;
 import com.docflow.security.MalwareScanner;
+import com.docflow.security.UserContext;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.transaction.support.TransactionSynchronization;
+import org.springframework.transaction.support.TransactionSynchronizationManager;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 import java.io.IOException;
 import java.nio.file.Files;
@@ -25,6 +31,7 @@ import java.util.Arrays;
 /** 统一保存头像、正文图片和附件，并保证所有解析路径位于上传根目录内。 */
 @Service
 public class FileService {
+    private static final Logger log = LoggerFactory.getLogger(FileService.class);
 
     private static final Set<String> ALLOWED_EXTENSIONS = Set.of(
             "jpg", "jpeg", "png", "gif", "webp", "pdf", "doc", "docx", "xls", "xlsx", "txt", "md"
@@ -38,9 +45,16 @@ public class FileService {
     private String uploadDir;
 
     private final MalwareScanner malwareScanner;
+    private final FileAccessService fileAccess;
 
     public FileService(MalwareScanner malwareScanner) {
+        this(malwareScanner, null);
+    }
+
+    @Autowired
+    public FileService(MalwareScanner malwareScanner, FileAccessService fileAccess) {
         this.malwareScanner = malwareScanner;
+        this.fileAccess = fileAccess;
     }
 
     public String upload(MultipartFile file) {
@@ -72,7 +86,7 @@ public class FileService {
         } catch (IOException exception) {
             throw new BusinessException(ErrorCode.INTERNAL_ERROR, "保存已上传文件失败");
         }
-        return "/files/" + relativePath.toString().replace("\\", "/");
+        return register(relativePath, "DOCUMENT");
     }
 
     public String uploadAvatar(MultipartFile file) {
@@ -111,9 +125,14 @@ public class FileService {
     }
 
     public void deleteByUrl(String fileUrl) {
-        if (!StringUtils.hasText(fileUrl) || !fileUrl.startsWith("/files/")) {
+        deleteStoredFile(fileUrl, false);
+    }
+
+    private void deleteStoredFile(String fileUrl, boolean afterCommit) {
+        if (!FileAccessService.isCanonical(fileUrl)) {
             return;
         }
+        if (fileAccess == null || !(afterCommit ? fileAccess.claimDeletionAfterCommit(fileUrl) : fileAccess.claimDeletion(fileUrl))) return;
         Path root = Paths.get(uploadDir).toAbsolutePath().normalize();
         Path target = root.resolve(fileUrl.substring("/files/".length())).normalize();
         if (!target.startsWith(root)) {
@@ -126,8 +145,22 @@ public class FileService {
         }
     }
 
+    public void deleteAfterCommit(String fileUrl) {
+        Runnable cleanup = () -> {
+            try { deleteStoredFile(fileUrl, true); }
+            catch (RuntimeException exception) { log.warn("Unable to clean up stored file after commit", exception); }
+        };
+        if (!TransactionSynchronizationManager.isSynchronizationActive()) {
+            cleanup.run();
+            return;
+        }
+        TransactionSynchronizationManager.registerSynchronization(new TransactionSynchronization() {
+            @Override public void afterCommit() { cleanup.run(); }
+        });
+    }
+
     public Optional<Path> resolveStoredFile(String fileUrl) {
-        if (!StringUtils.hasText(fileUrl) || !fileUrl.startsWith("/files/")) return Optional.empty();
+        if (!FileAccessService.isCanonical(fileUrl)) return Optional.empty();
         Path root = Paths.get(uploadDir).toAbsolutePath().normalize();
         Path target = root.resolve(fileUrl.substring("/files/".length())).normalize();
         if (!target.startsWith(root) || !Files.isRegularFile(target)) return Optional.empty();
@@ -154,7 +187,7 @@ public class FileService {
         } catch (IOException e) {
             throw new BusinessException(ErrorCode.INTERNAL_ERROR, "保存文档内嵌图片失败");
         }
-        return "/files/" + relativePath.toString().replace("\\", "/");
+        return register(relativePath, "DOCUMENT");
     }
 
     private String store(MultipartFile file, String extension, String prefix) {
@@ -172,7 +205,29 @@ public class FileService {
             throw new BusinessException(ErrorCode.INTERNAL_ERROR, "上传文件失败");
         }
 
-        return "/files/" + relativePath.toString().replace("\\", "/");
+        String kind = "avatars".equals(prefix) ? "AVATAR" : "feedback".equals(prefix) ? "FEEDBACK" : "DOCUMENT";
+        return register(relativePath, kind);
+    }
+
+    private String register(Path relativePath, String kind) {
+        String url = "/files/" + relativePath.toString().replace("\\", "/");
+        if (fileAccess == null) throw new BusinessException(ErrorCode.INTERNAL_ERROR, "File access registry unavailable");
+        try {
+            fileAccess.register(url, UserContext.getRequiredUserId(), kind);
+        } catch (RuntimeException exception) {
+            try { Files.deleteIfExists(Paths.get(uploadDir).resolve(relativePath)); } catch (IOException ignored) { }
+            throw exception;
+        }
+        if (TransactionSynchronizationManager.isSynchronizationActive()) {
+            TransactionSynchronizationManager.registerSynchronization(new TransactionSynchronization() {
+                @Override public void afterCompletion(int status) {
+                    if (status != STATUS_ROLLED_BACK) return;
+                    try { Files.deleteIfExists(Paths.get(uploadDir).resolve(relativePath)); }
+                    catch (IOException exception) { log.warn("Unable to clean up rolled-back upload", exception); }
+                }
+            });
+        }
+        return url;
     }
 
     public void inspect(MultipartFile file) {

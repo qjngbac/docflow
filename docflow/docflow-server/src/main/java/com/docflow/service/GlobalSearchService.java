@@ -42,6 +42,7 @@ public class GlobalSearchService {
     private List<GlobalSearchVO.Item> searchDocuments(Long userId, String keyword) {
         List<Long> permittedDocIds = permissionService.listAccessibleDocIds(userId);
         LambdaQueryWrapper<Document> query = new LambdaQueryWrapper<Document>()
+                .select(Document::getId, Document::getTitle, Document::getSummary, Document::getFolderId, Document::getUpdatedAt)
                 .and(access -> {
                     access.eq(Document::getOwnerId, userId);
                     if (!permittedDocIds.isEmpty()) access.or().in(Document::getId, permittedDocIds);
